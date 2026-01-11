@@ -51,16 +51,19 @@ namespace vulkan {
 		//该函数被CreateSwapchain(...)和RecreateSwapchain()调用
 		VkResult CreateSwapchain_Internal() {
 			/*待Ch1-4填充*/
+			return VK_SUCCESS;
 		}
 
 		//该函数被DeterminePhysicalDevice(...)调用，用于检查物理设备是否满足所需的队列族类型，并将对应的队列族索引返回到queueFamilyIndices，执行成功时直接将索引写入相应成员变量
 		VkResult GetQueueFamilyIndices(VkPhysicalDevice physicalDevice, bool enableGraphicsQueue, bool enableComputeQueue, uint32_t(&queueFamilyIndices)[3]) {
 			/*待Ch1-3填充*/
+			return VK_SUCCESS;
 		}
 
 		//以下函数用于创建debug messenger
 		VkResult CreateDebugMessenger() {
 			/*待Ch1-3填充*/
+			return VK_SUCCESS;
 		}
 
 		//该函数用于向instanceLayers或instanceExtensions容器中添加字符串指针，并确保不重复
@@ -70,15 +73,15 @@ namespace vulkan {
 					return;           //如果层/扩展的名称已在容器中，直接返回
 			container.push_back(name);
 		}
-
-
 	public:
 		//Getter
 		uint32_t ApiVersion() const {
 			return apiVersion;
 		}
 		VkResult UseLatestApiVersion() {
-			/*待Ch1-3填充*/
+			if (vkGetInstanceProcAddr(instance, "vkEnumerateInstanceVersion")) 
+				return vkEnumerateInstanceVersion(&apiVersion);
+			return VK_SUCCESS;
 		}
 
 		VkInstance Instance() const {
@@ -173,17 +176,21 @@ namespace vulkan {
 
 		VkResult GetSurfaceFormats() {
 			/*待Ch1-4填充*/
+			return VK_SUCCESS;
 		}
 		VkResult SetSurfaceFormat(VkSurfaceFormatKHR surfaceFormat) {
 			/*待Ch1-4填充*/
+			return VK_SUCCESS;
 		}
 		//该函数用于创建交换链
 		VkResult CreateSwapchain(bool limitFrameRate = true, VkSwapchainCreateFlagsKHR flags = 0) {
 			/*待Ch1-4填充*/
+			return VK_SUCCESS;
 		}
 		//该函数用于重建交换链
 		VkResult RecreateSwapchain() {
 			/*待Ch1-4填充*/
+			return VK_SUCCESS;
 		}
 
 
@@ -196,17 +203,54 @@ namespace vulkan {
 		}
 		//该函数用于创建Vulkan实例
 		VkResult CreateInstance(VkInstanceCreateFlags flags = 0) {
-			/*待Ch1-3填充*/
+#ifndef NDEBUG
+			AddInstanceLayer("VK_LAYER_KHRONOS_validation"); // 验证层
+			AddInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME); // debug扩展
+#endif
+			VkApplicationInfo applicationInfo = {
+				.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+				.apiVersion = apiVersion,
+			};
+			VkInstanceCreateInfo instanceCreateInfo = {
+				.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+				.pNext = nullptr,
+				.flags = flags,
+				.pApplicationInfo = &applicationInfo,
+				.enabledLayerCount = static_cast<uint32_t>(instanceLayers.size()),
+				.ppEnabledLayerNames = instanceLayers.data(),
+				.enabledExtensionCount = static_cast<uint32_t>(instanceExtensions.size()),
+				.ppEnabledExtensionNames = instanceExtensions.data(),
+			};
+
+			if (VkResult result = vkCreateInstance(&instanceCreateInfo, nullptr, &instance)) {
+				std::cout << std::format("[ graphicsBase ] ERROR\nFailed to create a vulkan instance!\nError code: {}\n", int32_t(result));
+				return result;
+			}
+			//成功创建Vulkan实例后，输出Vulkan版本
+			std::cout << std::format(
+				"Vulkan API Version: {}.{}.{}\n",
+				VK_VERSION_MAJOR(apiVersion),
+				VK_VERSION_MINOR(apiVersion),
+				VK_VERSION_PATCH(apiVersion));
+#ifndef NDEBUG
+			//创建完Vulkan实例后紧接着创建debug messenger
+			CreateDebugMessenger();
+#endif
+			return VK_SUCCESS;
 		}
+
+
 		//以下函数用于创建Vulkan实例失败后
 		VkResult CheckInstanceLayers(std::span<const char*> layersToCheck) {
 			/*待Ch1-3填充*/
+			return VK_SUCCESS;
 		}
 		void InstanceLayers(const std::vector<const char*>& layerNames) {
 			instanceLayers = layerNames;
 		}
 		VkResult CheckInstanceExtensions(std::span<const char*> extensionsToCheck, const char* layerName = nullptr) const {
 			/*待Ch1-3填充*/
+			return VK_SUCCESS;
 		}
 		void InstanceExtensions(const std::vector<const char*>& extensionNames) {
 			instanceExtensions = extensionNames;
@@ -219,18 +263,22 @@ namespace vulkan {
 		//该函数用于获取物理设备
 		VkResult GetPhysicalDevices() {
 			/*待Ch1-3填充*/
+			return VK_SUCCESS;
 		}
 		//该函数用于指定所用物理设备并调用GetQueueFamilyIndices(...)取得队列族索引
-		VkResult DeterminePhysicalDevice(uint32_t deviceIndex = 0, bool enableGraphicsQueue, bool enableComputeQueue = true) {
+		VkResult DeterminePhysicalDevice(uint32_t deviceIndex = 0, bool enableGraphicsQueue = true, bool enableComputeQueue = true) {
 			/*待Ch1-3填充*/
+			return VK_SUCCESS;
 		}
 		//该函数用于创建逻辑设备，并取得队列
 		VkResult CreateDevice(VkDeviceCreateFlags flags = 0) {
 			/*待Ch1-3填充*/
+			return VK_SUCCESS;
 		}
 		//以下函数用于创建逻辑设备失败后
 		VkResult CheckDeviceExtensions(std::span<const char*> extensionsToCheck, const char* layerName = nullptr) const {
 			/*待Ch1-3填充*/
+			return VK_SUCCESS;
 		}
 		void DeviceExtensions(const std::vector<const char*>& extensionNames) {
 			deviceExtensions = extensionNames;
