@@ -5,72 +5,72 @@
 // define vulkan namespace
 namespace vulkan {
 
-	// µ¥ÀıÀà
+	// å•ä¾‹ç±»
 	class graphicsBase {
 		uint32_t apiVersion = VK_API_VERSION_1_0;
 
-		VkInstance instance; // vulkanÊµÀı
-		std::vector<const char*> instanceLayers; // vulkanÊµÀı²ã
-		std::vector<const char*> instanceExtensions; // vulkanÊµÀıÀ©Õ¹
+		VkInstance instance; // vulkanå®ä¾‹
+		std::vector<const char*> instanceLayers; // vulkanå®ä¾‹å±‚
+		std::vector<const char*> instanceExtensions; // vulkanå®ä¾‹æ‰©å±•
 
 		VkDebugUtilsMessengerEXT debugMessenger; 
 
 		VkSurfaceKHR surface;
 
-		VkPhysicalDevice physicalDevice; // ÎïÀíÉè±¸
-		VkPhysicalDeviceProperties physicalDeviceProperties; // ÎïÀíÉè±¸ÊôĞÔ
-		VkPhysicalDeviceMemoryProperties physicalDeviceMemoryProperties; // ÎïÀíÉè±¸ÄÚ´æÊôĞÔ
+		VkPhysicalDevice physicalDevice; // ç‰©ç†è®¾å¤‡
+		VkPhysicalDeviceProperties physicalDeviceProperties; // ç‰©ç†è®¾å¤‡å±æ€§
+		VkPhysicalDeviceMemoryProperties physicalDeviceMemoryProperties; // ç‰©ç†è®¾å¤‡å†…å­˜å±æ€§
 		std::vector<VkPhysicalDevice> availablePhysicalDevices; 
 
-		VkDevice device; // Âß¼­Éè±¸
-		//ÓĞĞ§µÄË÷Òı´Ó0¿ªÊ¼£¬Òò´ËÊ¹ÓÃÌØÊâÖµVK_QUEUE_FAMILY_IGNORED£¨ÎªUINT32_MAX£©Îª¶ÓÁĞ×åË÷ÒıµÄÄ¬ÈÏÖµ
+		VkDevice device; // é€»è¾‘è®¾å¤‡
+		//æœ‰æ•ˆçš„ç´¢å¼•ä»0å¼€å§‹ï¼Œå› æ­¤ä½¿ç”¨ç‰¹æ®Šå€¼VK_QUEUE_FAMILY_IGNOREDï¼ˆä¸ºUINT32_MAXï¼‰ä¸ºé˜Ÿåˆ—æ—ç´¢å¼•çš„é»˜è®¤å€¼
 		uint32_t queueFamilyIndex_graphics = VK_QUEUE_FAMILY_IGNORED;
 		uint32_t queueFamilyIndex_presentation = VK_QUEUE_FAMILY_IGNORED;
 		uint32_t queueFamilyIndex_compute = VK_QUEUE_FAMILY_IGNORED;
-		VkQueue queue_graphics; // Í¼ĞÎ
-		VkQueue queue_presentation; // ³ÊÏÖ
-		VkQueue queue_compute; // ¼ÆËã
+		VkQueue queue_graphics; // å›¾å½¢
+		VkQueue queue_presentation; // å‘ˆç°
+		VkQueue queue_compute; // è®¡ç®—
 
 		std::vector<const char*> deviceExtensions;
 
 		std::vector <VkSurfaceFormatKHR> availableSurfaceFormats;
 
-		VkSwapchainKHR swapchain; // ½»»»Á´
-		std::vector <VkImage> swapchainImages; // VkImage=Ò»Æ¬Éè±¸ÄÚ´æ£¨device memory£©£¬½«¸ÃÆ¬ÄÚ´æÉÏµÄÊı¾İÓÃ×÷Í¼Ïñ
-		std::vector <VkImageView> swapchainImageViews; // VkImageViewÖ¸¶¨Í¼ÏñµÄÊ¹ÓÃ·½Ê½
-		//±£´æ½»»»Á´µÄ´´½¨ĞÅÏ¢ÒÔ±ãÖØ½¨½»»»Á´
+		VkSwapchainKHR swapchain; // äº¤æ¢é“¾
+		std::vector <VkImage> swapchainImages; // VkImage=ä¸€ç‰‡è®¾å¤‡å†…å­˜ï¼ˆdevice memoryï¼‰ï¼Œå°†è¯¥ç‰‡å†…å­˜ä¸Šçš„æ•°æ®ç”¨ä½œå›¾åƒ
+		std::vector <VkImageView> swapchainImageViews; // VkImageViewæŒ‡å®šå›¾åƒçš„ä½¿ç”¨æ–¹å¼
+		//ä¿å­˜äº¤æ¢é“¾çš„åˆ›å»ºä¿¡æ¯ä»¥ä¾¿é‡å»ºäº¤æ¢é“¾
 		VkSwapchainCreateInfoKHR swapchainCreateInfo = {};
 
 		// static
-		static graphicsBase singleton; // Ö»ÊÇÉùÃ÷
+		static graphicsBase singleton; // åªæ˜¯å£°æ˜
 		// -------------------------
 		graphicsBase() = default;
-		graphicsBase(graphicsBase&&) = delete; // ²»¿ÉÒÆ¶¯£¬Ã»ÓĞ¶¨Òå¸´ÖÆ¹¹ÔìÆ÷¡¢¸´ÖÆ¸³Öµ¡¢ÒÆ¶¯¸³Öµ£¬ËÄ¸öº¯ÊıÈ«²¿ÎŞ·¨Ê¹ÓÃ
+		graphicsBase(graphicsBase&&) = delete; // ä¸å¯ç§»åŠ¨ï¼Œæ²¡æœ‰å®šä¹‰å¤åˆ¶æ„é€ å™¨ã€å¤åˆ¶èµ‹å€¼ã€ç§»åŠ¨èµ‹å€¼ï¼Œå››ä¸ªå‡½æ•°å…¨éƒ¨æ— æ³•ä½¿ç”¨
 		~graphicsBase() {};
 
-		//¸Ãº¯Êı±»CreateSwapchain(...)ºÍRecreateSwapchain()µ÷ÓÃ
+		//è¯¥å‡½æ•°è¢«CreateSwapchain(...)å’ŒRecreateSwapchain()è°ƒç”¨
 		VkResult CreateSwapchain_Internal() {
-			/*´ıCh1-4Ìî³ä*/
+			/*å¾…Ch1-4å¡«å……*/
 			return VK_SUCCESS;
 		}
 
-		//¸Ãº¯Êı±»DeterminePhysicalDevice(...)µ÷ÓÃ£¬ÓÃÓÚ¼ì²éÎïÀíÉè±¸ÊÇ·ñÂú×ãËùĞèµÄ¶ÓÁĞ×åÀàĞÍ£¬²¢½«¶ÔÓ¦µÄ¶ÓÁĞ×åË÷Òı·µ»Øµ½queueFamilyIndices£¬Ö´ĞĞ³É¹¦Ê±Ö±½Ó½«Ë÷ÒıĞ´ÈëÏàÓ¦³ÉÔ±±äÁ¿
+		//è¯¥å‡½æ•°è¢«DeterminePhysicalDevice(...)è°ƒç”¨ï¼Œç”¨äºæ£€æŸ¥ç‰©ç†è®¾å¤‡æ˜¯å¦æ»¡è¶³æ‰€éœ€çš„é˜Ÿåˆ—æ—ç±»å‹ï¼Œå¹¶å°†å¯¹åº”çš„é˜Ÿåˆ—æ—ç´¢å¼•è¿”å›åˆ°queueFamilyIndicesï¼Œæ‰§è¡ŒæˆåŠŸæ—¶ç›´æ¥å°†ç´¢å¼•å†™å…¥ç›¸åº”æˆå‘˜å˜é‡
 		VkResult GetQueueFamilyIndices(VkPhysicalDevice physicalDevice, bool enableGraphicsQueue, bool enableComputeQueue, uint32_t(&queueFamilyIndices)[3]) {
-			/*´ıCh1-3Ìî³ä*/
+			/*å¾…Ch1-3å¡«å……*/
 			return VK_SUCCESS;
 		}
 
-		//ÒÔÏÂº¯ÊıÓÃÓÚ´´½¨debug messenger
+		//ä»¥ä¸‹å‡½æ•°ç”¨äºåˆ›å»ºdebug messenger
 		VkResult CreateDebugMessenger() {
-			/*´ıCh1-3Ìî³ä*/
+			/*å¾…Ch1-3å¡«å……*/
 			return VK_SUCCESS;
 		}
 
-		//¸Ãº¯ÊıÓÃÓÚÏòinstanceLayers»òinstanceExtensionsÈİÆ÷ÖĞÌí¼Ó×Ö·û´®Ö¸Õë£¬²¢È·±£²»ÖØ¸´
+		//è¯¥å‡½æ•°ç”¨äºå‘instanceLayersæˆ–instanceExtensionså®¹å™¨ä¸­æ·»åŠ å­—ç¬¦ä¸²æŒ‡é’ˆï¼Œå¹¶ç¡®ä¿ä¸é‡å¤
 		static void AddLayerOrExtension(std::vector<const char*>& container, const char* name) {
 			for (auto& i : container)
-				if (!strcmp(name, i)) //strcmp(...)ÔÚ×Ö·û´®Æ¥ÅäÊ±·µ»Ø0
-					return;           //Èç¹û²ã/À©Õ¹µÄÃû³ÆÒÑÔÚÈİÆ÷ÖĞ£¬Ö±½Ó·µ»Ø
+				if (!strcmp(name, i)) //strcmp(...)åœ¨å­—ç¬¦ä¸²åŒ¹é…æ—¶è¿”å›0
+					return;           //å¦‚æœå±‚/æ‰©å±•çš„åç§°å·²åœ¨å®¹å™¨ä¸­ï¼Œç›´æ¥è¿”å›
 			container.push_back(name);
 		}
 	public:
@@ -100,7 +100,7 @@ namespace vulkan {
 			return surface;
 		}
 
-		//¸Ãº¯ÊıÓÃÓÚÑ¡ÔñÎïÀíÉè±¸Ç°
+		//è¯¥å‡½æ•°ç”¨äºé€‰æ‹©ç‰©ç†è®¾å¤‡å‰
 		void Surface(VkSurfaceKHR surface) {
 			if (!this->surface)
 				this->surface = surface;
@@ -175,37 +175,37 @@ namespace vulkan {
 		}
 
 		VkResult GetSurfaceFormats() {
-			/*´ıCh1-4Ìî³ä*/
+			/*å¾…Ch1-4å¡«å……*/
 			return VK_SUCCESS;
 		}
 		VkResult SetSurfaceFormat(VkSurfaceFormatKHR surfaceFormat) {
-			/*´ıCh1-4Ìî³ä*/
+			/*å¾…Ch1-4å¡«å……*/
 			return VK_SUCCESS;
 		}
-		//¸Ãº¯ÊıÓÃÓÚ´´½¨½»»»Á´
+		//è¯¥å‡½æ•°ç”¨äºåˆ›å»ºäº¤æ¢é“¾
 		VkResult CreateSwapchain(bool limitFrameRate = true, VkSwapchainCreateFlagsKHR flags = 0) {
-			/*´ıCh1-4Ìî³ä*/
+			/*å¾…Ch1-4å¡«å……*/
 			return VK_SUCCESS;
 		}
-		//¸Ãº¯ÊıÓÃÓÚÖØ½¨½»»»Á´
+		//è¯¥å‡½æ•°ç”¨äºé‡å»ºäº¤æ¢é“¾
 		VkResult RecreateSwapchain() {
-			/*´ıCh1-4Ìî³ä*/
+			/*å¾…Ch1-4å¡«å……*/
 			return VK_SUCCESS;
 		}
 
 
-		//ÒÔÏÂº¯ÊıÓÃÓÚ´´½¨VulkanÊµÀıÇ°
+		//ä»¥ä¸‹å‡½æ•°ç”¨äºåˆ›å»ºVulkanå®ä¾‹å‰
 		void AddInstanceLayer(const char* layerName) {
 			AddLayerOrExtension(instanceLayers, layerName);
 		}
 		void AddInstanceExtension(const char* extensionName) {
 			AddLayerOrExtension(instanceExtensions, extensionName);
 		}
-		//¸Ãº¯ÊıÓÃÓÚ´´½¨VulkanÊµÀı
+		//è¯¥å‡½æ•°ç”¨äºåˆ›å»ºVulkanå®ä¾‹
 		VkResult CreateInstance(VkInstanceCreateFlags flags = 0) {
 #ifndef NDEBUG
-			AddInstanceLayer("VK_LAYER_KHRONOS_validation"); // ÑéÖ¤²ã
-			AddInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME); // debugÀ©Õ¹
+			AddInstanceLayer("VK_LAYER_KHRONOS_validation"); // éªŒè¯å±‚
+			AddInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME); // debugæ‰©å±•
 #endif
 			VkApplicationInfo applicationInfo = {
 				.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -226,58 +226,58 @@ namespace vulkan {
 				std::cout << std::format("[ graphicsBase ] ERROR\nFailed to create a vulkan instance!\nError code: {}\n", int32_t(result));
 				return result;
 			}
-			//³É¹¦´´½¨VulkanÊµÀıºó£¬Êä³öVulkan°æ±¾
+			//æˆåŠŸåˆ›å»ºVulkanå®ä¾‹åï¼Œè¾“å‡ºVulkanç‰ˆæœ¬
 			std::cout << std::format(
 				"Vulkan API Version: {}.{}.{}\n",
 				VK_VERSION_MAJOR(apiVersion),
 				VK_VERSION_MINOR(apiVersion),
 				VK_VERSION_PATCH(apiVersion));
 #ifndef NDEBUG
-			//´´½¨ÍêVulkanÊµÀıºó½ô½Ó×Å´´½¨debug messenger
+			//åˆ›å»ºå®ŒVulkanå®ä¾‹åç´§æ¥ç€åˆ›å»ºdebug messenger
 			CreateDebugMessenger();
 #endif
 			return VK_SUCCESS;
 		}
 
 
-		//ÒÔÏÂº¯ÊıÓÃÓÚ´´½¨VulkanÊµÀıÊ§°Üºó
+		//ä»¥ä¸‹å‡½æ•°ç”¨äºåˆ›å»ºVulkanå®ä¾‹å¤±è´¥å
 		VkResult CheckInstanceLayers(std::span<const char*> layersToCheck) {
-			/*´ıCh1-3Ìî³ä*/
+			/*å¾…Ch1-3å¡«å……*/
 			return VK_SUCCESS;
 		}
 		void InstanceLayers(const std::vector<const char*>& layerNames) {
 			instanceLayers = layerNames;
 		}
 		VkResult CheckInstanceExtensions(std::span<const char*> extensionsToCheck, const char* layerName = nullptr) const {
-			/*´ıCh1-3Ìî³ä*/
+			/*å¾…Ch1-3å¡«å……*/
 			return VK_SUCCESS;
 		}
 		void InstanceExtensions(const std::vector<const char*>& extensionNames) {
 			instanceExtensions = extensionNames;
 		}
 
-		//¸Ãº¯ÊıÓÃÓÚ´´½¨Âß¼­Éè±¸Ç°
+		//è¯¥å‡½æ•°ç”¨äºåˆ›å»ºé€»è¾‘è®¾å¤‡å‰
 		void AddDeviceExtension(const char* extensionName) {
 			AddLayerOrExtension(deviceExtensions, extensionName);
 		}
-		//¸Ãº¯ÊıÓÃÓÚ»ñÈ¡ÎïÀíÉè±¸
+		//è¯¥å‡½æ•°ç”¨äºè·å–ç‰©ç†è®¾å¤‡
 		VkResult GetPhysicalDevices() {
-			/*´ıCh1-3Ìî³ä*/
+			/*å¾…Ch1-3å¡«å……*/
 			return VK_SUCCESS;
 		}
-		//¸Ãº¯ÊıÓÃÓÚÖ¸¶¨ËùÓÃÎïÀíÉè±¸²¢µ÷ÓÃGetQueueFamilyIndices(...)È¡µÃ¶ÓÁĞ×åË÷Òı
+		//è¯¥å‡½æ•°ç”¨äºæŒ‡å®šæ‰€ç”¨ç‰©ç†è®¾å¤‡å¹¶è°ƒç”¨GetQueueFamilyIndices(...)å–å¾—é˜Ÿåˆ—æ—ç´¢å¼•
 		VkResult DeterminePhysicalDevice(uint32_t deviceIndex = 0, bool enableGraphicsQueue = true, bool enableComputeQueue = true) {
-			/*´ıCh1-3Ìî³ä*/
+			/*å¾…Ch1-3å¡«å……*/
 			return VK_SUCCESS;
 		}
-		//¸Ãº¯ÊıÓÃÓÚ´´½¨Âß¼­Éè±¸£¬²¢È¡µÃ¶ÓÁĞ
+		//è¯¥å‡½æ•°ç”¨äºåˆ›å»ºé€»è¾‘è®¾å¤‡ï¼Œå¹¶å–å¾—é˜Ÿåˆ—
 		VkResult CreateDevice(VkDeviceCreateFlags flags = 0) {
-			/*´ıCh1-3Ìî³ä*/
+			/*å¾…Ch1-3å¡«å……*/
 			return VK_SUCCESS;
 		}
-		//ÒÔÏÂº¯ÊıÓÃÓÚ´´½¨Âß¼­Éè±¸Ê§°Üºó
+		//ä»¥ä¸‹å‡½æ•°ç”¨äºåˆ›å»ºé€»è¾‘è®¾å¤‡å¤±è´¥å
 		VkResult CheckDeviceExtensions(std::span<const char*> extensionsToCheck, const char* layerName = nullptr) const {
-			/*´ıCh1-3Ìî³ä*/
+			/*å¾…Ch1-3å¡«å……*/
 			return VK_SUCCESS;
 		}
 		void DeviceExtensions(const std::vector<const char*>& extensionNames) {
@@ -288,6 +288,6 @@ namespace vulkan {
 			return singleton;
 		}
 	};
-	inline graphicsBase graphicsBase::singleton; // ¶¨Òå, inline ±äÁ¿, C++17 ÔÊĞíÔÚÀà¶¨ÒåÖĞÖ±½Ó³õÊ¼»¯
+	inline graphicsBase graphicsBase::singleton; // å®šä¹‰, inline å˜é‡, C++17 å…è®¸åœ¨ç±»å®šä¹‰ä¸­ç›´æ¥åˆå§‹åŒ–
 
 }
