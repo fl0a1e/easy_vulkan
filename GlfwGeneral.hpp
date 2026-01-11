@@ -1,4 +1,4 @@
-#include "VKBase.h"
+#include "vkBase.h"
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #pragma comment(lib, "glfw3.lib") //链接编译所需的静态库
@@ -22,6 +22,25 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	glfwWindowHint(GLFW_RESIZABLE, isResizable);
+
+	{
+	// 获取vulkan实例扩展
+	uint32_t extensionCount = 0;
+	const char** extensionNames;
+	extensionNames = glfwGetRequiredInstanceExtensions(&extensionCount);
+	if (!extensionNames) {
+		std::cout << std::format("[ InitializeWindow ]\nVulkan is not available on this machine!\n");
+		glfwTerminate();
+		return false;
+	}
+	for (size_t i = 0; i < extensionCount; i++) {
+		vulkan::graphicsBase::Base().AddInstanceExtension(extensionNames[i]);
+	}
+	vulkan::graphicsBase::Base().AddDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
+	vulkan::graphicsBase::Base().CreateInstance();
+	}
+
 	pMonitor = glfwGetPrimaryMonitor(); // 获取当前显示器信息
 	const GLFWvidmode* pMode = glfwGetVideoMode(pMonitor); // 获取当前显示器视频模式
 	pWindow = fullScreen ? 
