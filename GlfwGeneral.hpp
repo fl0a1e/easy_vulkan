@@ -8,6 +8,7 @@ GLFWwindow* pWindow; //窗口指针
 GLFWmonitor* pMonitor; //显示器信息指针
 const char* windowTitle = "EasyVK"; //窗口标题
 
+using namespace vulkan;
 
 // 初始化成功时返回true，否则返回false
 // size: 窗口大小
@@ -15,9 +16,6 @@ const char* windowTitle = "EasyVK"; //窗口标题
 // isResizable: 指定窗口是否可拉伸，游戏窗口通常是不可任意拉伸的
 // limitFrameRate: 指定是否将帧数限制到不超过屏幕刷新率，在本节先不实现这个参数的作用
 bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable = true, bool limitFrameRate = true) {
-	
-	using namespace vulkan;
-
 
 	if(!glfwInit()) {
 		std::cout << std::format("[ InitializeWindow ] ERROR\nFailed to initialize GLFW!\n");
@@ -76,7 +74,8 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 			return false;
 		//----------------------------------------
 
-		/*待Ch1-4填充*/
+		if (graphicsBase::Base().CreateSwapchain(limitFrameRate))
+			return false;
 	}
 
 	return true;
@@ -84,6 +83,7 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 
 // 终止窗口时，清理GLFW
 void TerminateWindow() {
+	graphicsBase::Base().WaitIdle();
 	glfwTerminate();
 }
 
