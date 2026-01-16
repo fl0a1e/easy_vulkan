@@ -1173,4 +1173,77 @@ namespace vulkan {
 			return Create(createInfo);
 		}
 	};
+
+
+	class renderPass {
+		VkRenderPass handle = VK_NULL_HANDLE;
+	public:
+		renderPass() = default;
+		renderPass(VkRenderPassCreateInfo& createInfo) {
+			Create(createInfo);
+		}
+		renderPass(renderPass&& other) noexcept { MoveHandle; }
+		~renderPass() { DestroyHandleBy(vkDestroyRenderPass); }
+		//Getter
+		DefineHandleTypeOperator;
+		DefineAddressFunction;
+		//Const Function
+		// 命令缓冲区中，用vkCmdBeginRenderPass(...)开始一个renderpass
+		void CmdBegin(VkCommandBuffer commandBuffer, VkRenderPassBeginInfo& beginInfo, VkSubpassContents subpassContents = VK_SUBPASS_CONTENTS_INLINE) const {
+			beginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+			beginInfo.renderPass = handle;
+			vkCmdBeginRenderPass(commandBuffer, &beginInfo, subpassContents);
+		}
+		void CmdBegin(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer, VkRect2D renderArea, arrayRef<const VkClearValue> clearValues = {}, VkSubpassContents subpassContents = VK_SUBPASS_CONTENTS_INLINE) const {
+			VkRenderPassBeginInfo beginInfo = {
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.renderPass = handle,
+				.framebuffer = framebuffer,
+				.renderArea = renderArea,
+				.clearValueCount = uint32_t(clearValues.Count()),
+				.pClearValues = clearValues.Pointer()
+			};
+			vkCmdBeginRenderPass(commandBuffer, &beginInfo, subpassContents);
+		}
+		// 进入下一个子通道
+		void CmdNext(VkCommandBuffer commandBuffer, VkSubpassContents subpassContents = VK_SUBPASS_CONTENTS_INLINE) const {
+			vkCmdNextSubpass(commandBuffer, subpassContents);
+		}
+		// 结束当前渲染通道
+		void CmdEnd(VkCommandBuffer commandBuffer) const {
+			vkCmdEndRenderPass(commandBuffer);
+		}
+		//Non-const Function
+		result_t Create(VkRenderPassCreateInfo& createInfo) {
+			createInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+			VkResult result = vkCreateRenderPass(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+			if (result)
+				outStream << std::format("[ renderPass ] ERROR\nFailed to create a render pass!\nError code: {}\n", int32_t(result));
+			return result;
+		}
+	};
+
+
+	class framebuffer {
+		VkFramebuffer handle = VK_NULL_HANDLE;
+	public:
+		framebuffer() = default;
+		framebuffer(VkFramebufferCreateInfo& createInfo) {
+			Create(createInfo);
+		}
+		framebuffer(framebuffer&& other) noexcept { MoveHandle; }
+		~framebuffer() { DestroyHandleBy(vkDestroyFramebuffer); }
+		//Getter
+		DefineHandleTypeOperator;
+		DefineAddressFunction;
+		//Non-const Function
+		result_t Create(VkFramebufferCreateInfo& createInfo) {
+			createInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			VkResult result = vkCreateFramebuffer(graphicsBase::Base().Device(), &createInfo, nullptr, &handle);
+			if (result)
+				outStream << std::format("[ framebuffer ] ERROR\nFailed to create a framebuffer!\nError code: {}\n", int32_t(result));
+			return result;
+		}
+
+	};
 }
