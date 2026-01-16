@@ -1,10 +1,12 @@
 #include "GlfwGeneral.hpp"
+#include "easyVk.hpp"
 
 
 int main() {
     if (!InitializeWindow({ 1280, 720 }))
         return -1;
 
+    const auto& [renderPass, framebuffers] = easyVulkan::CreateRpwf_Screen();
 
     fence fence(VK_FENCE_CREATE_SIGNALED_BIT); //以置位状态创建栅栏
     semaphore semaphore_imageIsAvailable;
@@ -14,6 +16,7 @@ int main() {
     commandPool commandPool(graphicsBase::Base().QueueFamilyIndex_Graphics(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
     commandPool.AllocateBuffers(commandBuffer);
 
+    VkClearValue clearColor = { .color = { .5f, 0.5f, 0.5f, 1.f } }; //ClearValue
 
     //fence在渲染完成后被置位。
     //渲染循环的开头等待栅栏被置位，因此以置位状态创建fence（为了在首次执行渲染循环时能完成等待）。
@@ -26,13 +29,17 @@ int main() {
         //----------------------------------------
 
 
-
         //获取交换链图像索引
         graphicsBase::Base().SwapImage(semaphore_imageIsAvailable);
+
+        //因为framebuffer与所获取的交换链图像一一对应，获取交换链图像索引
+        /*新增*/ auto i = graphicsBase::Base().CurrentImageIndex();
         
         //开始录制命令缓冲区
         commandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+        /*开始渲染通道*/ renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, clearColor);
         /*渲染命令，待填充*/
+        /*结束渲染通道*/ renderPass.CmdEnd(commandBuffer);
         commandBuffer.End();
 
         /*提交命令缓冲区*/

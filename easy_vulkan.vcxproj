@@ -144,6 +144,7 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="easyVk.hpp" />
     <ClInclude Include="GlfwGeneral.hpp" />
     <ClInclude Include="vkBase.h" />
     <ClInclude Include="vkStart.h" />
