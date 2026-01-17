@@ -32,5 +32,16 @@
     <ClInclude Include="easyVk.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="vkBase+.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\triangle.vs.hlsl">
+      <Filter>资源文件</Filter>
+    </None>
+    <None Include="shaders\triangle.ps.hlsl">
+      <Filter>资源文件</Filter>
+    </None>
   </ItemGroup>
 </Project>

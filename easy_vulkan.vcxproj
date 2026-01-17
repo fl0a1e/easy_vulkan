@@ -146,8 +146,13 @@
   <ItemGroup>
     <ClInclude Include="easyVk.hpp" />
     <ClInclude Include="GlfwGeneral.hpp" />
+    <ClInclude Include="vkBase+.h" />
     <ClInclude Include="vkBase.h" />
     <ClInclude Include="vkStart.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\triangle.ps.hlsl" />
+    <None Include="shaders\triangle.vs.hlsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "VKBase.h"
+#include "VKBase+.h"
 
 // Render Pipeline and FrameBuffer
 
@@ -22,12 +22,12 @@ namespace easyVulkan {
         // ===== 创建render pass =========
         // 描述图像附件
         VkAttachmentDescription attachmentDescription = {
-            .format = graphicsBase::Base().SwapchainCreateInfo().imageFormat,
+            .format = graphicsBase::Base().SwapchainCreateInfo().imageFormat, // 这里描述的是交换链图像
             .samples = VK_SAMPLE_COUNT_1_BIT,
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
             .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+            .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR // 将交换链图像用于呈现
         };
 
         // 只有一个子通道，该子通道只使用一个颜色附件
@@ -61,7 +61,7 @@ namespace easyVulkan {
 
         // ===== 创建framebuffers =========
         //为每张交换链图像创建帧缓冲
-        rpwf.framebuffers.resize(graphicsBase::Base().SwapchainImageCount());
+        rpwf.framebuffers.resize(graphicsBase::Base().SwapchainImageCount()); //rpwf.framebuffers的元素数量对齐交换链图像
 
         VkFramebufferCreateInfo framebufferCreateInfo = {
         .renderPass = rpwf.renderPass,
