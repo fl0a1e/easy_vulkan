@@ -82,13 +82,13 @@ struct graphicsPipelineCreateInfoPack {
     //Non-const Function
     //该函数用于将各个vector中数据的地址赋值给各个创建信息中相应成员，并相应改变各个count
     void UpdateAllArrays() {
-        createInfo.stageCount = shaderStages.size();
-        vertexInputStateCi.vertexBindingDescriptionCount = vertexInputBindings.size();
-        vertexInputStateCi.vertexAttributeDescriptionCount = vertexInputAttributes.size();
-        viewportStateCi.viewportCount = viewports.size() ? uint32_t(viewports.size()) : dynamicViewportCount;
-        viewportStateCi.scissorCount = scissors.size() ? uint32_t(scissors.size()) : dynamicScissorCount;
-        colorBlendStateCi.attachmentCount = colorBlendAttachmentStates.size();
-        dynamicStateCi.dynamicStateCount = dynamicStates.size();
+        createInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
+        vertexInputStateCi.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInputBindings.size());
+        vertexInputStateCi.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputAttributes.size());
+        viewportStateCi.viewportCount = viewports.size() ? static_cast<uint32_t>(viewports.size()) : dynamicViewportCount;
+        viewportStateCi.scissorCount = scissors.size() ? static_cast<uint32_t>(scissors.size()) : dynamicScissorCount;
+        colorBlendStateCi.attachmentCount = static_cast<uint32_t>(colorBlendAttachmentStates.size());
+        dynamicStateCi.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
         UpdateAllArrayAddresses();
     }
 private:

@@ -91,7 +91,7 @@ namespace easyVulkan {
                 framebufferCreateInfo.pAttachments = &attachment;
                 rpwf.framebuffers[i].Create(framebufferCreateInfo);
             }
-            };
+        };
         auto DestroyFramebuffers = [] {
             rpwf.framebuffers.clear(); //清空vector中的元素时会逐一执行析构函数
             };
