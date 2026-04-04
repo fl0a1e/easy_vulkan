@@ -8,7 +8,7 @@
 
 ## 📌 TODO
 
-- [x] Vulkan 基础框架
+- [x] Vulkan 基础框架 - 参考 [EasyVulkan](https://easyvulkan.github.io)
 - [ ] 完善 Pipeline
 - [ ] Camera
 - [ ] ...
@@ -54,6 +54,12 @@ cd easy_vulkan
 
 - NVIDIA GeForce GTX 1650
 - NVIDIA GeForce RTX 4070
+
+---
+
+## shader扩展
+
+shader使用HLSL，使用dxc编译成SPIR-V
 
 ---
 
