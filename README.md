@@ -8,9 +8,9 @@
 
 ## 📌 TODO
 
-- [x] Vulkan 基础框架 - 参考 [EasyVulkan](https://easyvulkan.github.io)
-- [ ] 完善 Pipeline
-- [ ] Camera
+- [x] Vulkan 基础框架，渲染最初的三角形 - 参考 [EasyVulkan](https://easyvulkan.github.io)
+- [x] 加入DeviceMemory、Buffer，渲染基础立方体
+- [ ] Camera 系统
 - [ ] ...
 
 ---

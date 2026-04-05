@@ -2,6 +2,8 @@
 
 // cpp 
 #include <iostream>
+#include <array>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <vector>
