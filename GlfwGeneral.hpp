@@ -49,13 +49,14 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 		for (size_t i = 0; i < extensionCount; i++) {
 			graphicsBase::Base().AddInstanceExtension(extensionNames[i]);
 		}
+		// 做窗口显示必须启用 swapchain 扩展。
 		graphicsBase::Base().AddDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-		//在创建window surface前创建Vulkan实例
+		// surface 依赖 instance，因此先创建 Vulkan instance
 		graphicsBase::Base().UseLatestApiVersion();
 		if (graphicsBase::Base().CreateInstance())
 			return false;
 
-		// 获取 window surface
+		// 让 GLFW 为当前窗口创建 VkSurfaceKHR，供设备选择和交换链创建使用
 		VkSurfaceKHR surface = VK_NULL_HANDLE;
 		if (VkResult result = glfwCreateWindowSurface(graphicsBase::Base().Instance(), pWindow, nullptr, &surface)) {
 			std::cout << std::format("[ InitializeWindow ] ERROR\nFailed to create a window surface!\nError code: {}\n", int32_t(result));
@@ -64,7 +65,7 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 		}
 		graphicsBase::Base().Surface(surface);
 
-		//通过用||操作符短路执行来省去几行
+		// 初始化主链路：枚举物理设备 -> 选择支持 graphics/present 的设备 -> 创建逻辑设备
 		if (//获取物理设备，并使用列表中的第一个物理设备，这里不考虑以下任意函数失败后更换物理设备的情况
 			graphicsBase::Base().GetPhysicalDevices() ||
 			//一个true一个false，暂时不需要计算用的队列
@@ -74,6 +75,7 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 			return false;
 		//----------------------------------------
 
+		// 交换链负责把渲染结果送到窗口。
 		if (graphicsBase::Base().CreateSwapchain(limitFrameRate))
 			return false;
 	}
@@ -83,6 +85,7 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 
 // 终止窗口时，清理GLFW
 void TerminateWindow() {
+	// 退出前先等待 GPU 空闲，避免资源仍在使用时就被销毁。
 	graphicsBase::Base().WaitIdle();
 	glfwTerminate();
 }
@@ -98,7 +101,7 @@ void TitleFps() {
 	// every frame
 	time1 = glfwGetTime();
 	++dframe;
-	// update fps
+	// 每秒更新一次标题，避免每帧都改窗口标题
 	if ((dt = time1 - time0) >= 1) {
 		info.precision(1);
 		info << windowTitle << "    " << std::fixed << dframe / dt << " FPS";

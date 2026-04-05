@@ -15,12 +15,15 @@ namespace easyVulkan {
         std::vector<framebuffer> framebuffers;
     };
 
-    // 创建一个直接渲染到交换链图像，且不做深度测试等任何测试的render pass
+    // 创建一个直接画到交换链图像的最简 render pass：
+    // 只有颜色附件，没有深度模板，也没有多子通道。
     const auto& CreateRpwf_Screen() {
         static renderPassWithFramebuffers rpwf;
 
         // ===== 创建render pass =========
-        // 描述图像附件
+        // 这里描述的附件就是交换链图像本身。
+        // loadOp = CLEAR 表示每帧开始先清屏，
+        // finalLayout = PRESENT_SRC_KHR 表示渲染结束后要用于显示。
         VkAttachmentDescription attachmentDescription = {
             .format = graphicsBase::Base().SwapchainCreateInfo().imageFormat, // 这里描述的是交换链图像
             .samples = VK_SAMPLE_COUNT_1_BIT,
@@ -30,7 +33,7 @@ namespace easyVulkan {
             .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR // 将交换链图像用于呈现
         };
 
-        // 只有一个子通道，该子通道只使用一个颜色附件
+        // 这个 render pass 只有一个 subpass，而且只写一个颜色附件
         VkAttachmentReference attachmentReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
         VkSubpassDescription subpassDescription = {
             .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -38,7 +41,7 @@ namespace easyVulkan {
             .pColorAttachments = &attachmentReference
         };
 
-        // 书写子通道依赖，覆盖渲染通道开始时的隐式依赖
+        // 显式指定子通道依赖，让颜色输出阶段的同步关系更清晰
         VkSubpassDependency subpassDependency = {
         .srcSubpass = VK_SUBPASS_EXTERNAL,
         .dstSubpass = 0,
@@ -76,7 +79,8 @@ namespace easyVulkan {
             rpwf.framebuffers[i].Create(framebufferCreateInfo);
         }
 
-        //由于帧缓冲的大小与交换链图像相关，重建交换链时也会需要重建帧缓冲，于是将创建和销毁帧缓冲的代码扔进各自的lambda表达式，以用作回调函数
+        // framebuffer 依赖交换链尺寸和 image view。
+        // 所以交换链一旦重建，framebuffer 也必须跟着销毁并重建。
         auto CreateFramebuffers = [] {
             rpwf.framebuffers.resize(graphicsBase::Base().SwapchainImageCount());
             VkFramebufferCreateInfo framebufferCreateInfo = {
@@ -97,7 +101,8 @@ namespace easyVulkan {
             };
         CreateFramebuffers();
 
-        ExecuteOnce(rpwf); //防止再次调用本函数时，重复添加回调函数
+        // 这个函数可能被多次访问，但回调只应该注册一次。
+        ExecuteOnce(rpwf);
         graphicsBase::Base().AddCallback_CreateSwapchain(CreateFramebuffers);
         graphicsBase::Base().AddCallback_DestroySwapchain(DestroyFramebuffers);
 
