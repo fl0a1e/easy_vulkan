@@ -3,18 +3,36 @@
 
 using namespace vulkan;
 
-// 这个结构既影响 CPU 侧数据布局，也影响 pipeline 里的顶点输入描述
+// 一个顶点包含位置和颜色两部分属性。
+// pipeline 会根据这个结构体的内存布局，告诉 shader 去哪里读 Position/Color。
 struct Vertex {
     glm::vec3 position;
     glm::vec3 color;
+};
+
+// MVP 是最基础的 3D 变换链：
+// model 把模型从局部空间放到世界里，
+// view 表示摄像机观察，
+// proj 负责把 3D 投影到屏幕。
+struct UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
 };
 
 pipelineLayout pipelineLayout_cube; // 立方体管线布局
 pipeline pipeline_cube;             // 立方体管线
 buffer vertexBuffer_cube;           // 顶点缓冲
 buffer indexBuffer_cube;            // 索引缓冲
+buffer uniformBuffer_cube;          // uniform 缓冲
+
 deviceMemory vertexMemory_cube;     // 顶点缓冲绑定的显存
 deviceMemory indexMemory_cube;      // 索引缓冲绑定的显存
+deviceMemory uniformMemory_cube;    // uniform 缓冲绑定的显存
+
+VkDescriptorSetLayout descriptorSetLayout_cube = VK_NULL_HANDLE;
+VkDescriptorPool descriptorPool_cube = VK_NULL_HANDLE;
+VkDescriptorSet descriptorSet_cube = VK_NULL_HANDLE;
 
 const std::array<Vertex, 8> cubeVertices = {
     Vertex{ {-0.5f, -0.5f, -0.5f}, {1.f, 0.2f, 0.2f} },
@@ -61,10 +79,32 @@ const auto& RenderPassAndFramebuffers() {
     return rpwf;
 }
 
+void CreateDescriptorSetLayout() {
+    // 这里声明一个最小的 descriptor set layout：
+    // set 0 / binding 0 放一个给 VS 使用的 uniform buffer。
+    VkDescriptorSetLayoutBinding uboBinding{};
+    uboBinding.binding = 0;
+    uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uboBinding.descriptorCount = 1;
+    uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    createInfo.bindingCount = 1;
+    createInfo.pBindings = &uboBinding;
+
+    if (VkResult result = vkCreateDescriptorSetLayout(graphicsBase::Base().Device(), &createInfo, nullptr, &descriptorSetLayout_cube)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create descriptor set layout!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+}
+
 void CreateLayout() {
-    // 当前示例没有 descriptor set 和 push constant，
-    // 所以这里创建的是一个空的 pipeline layout。
+    // pipeline layout 描述的是“这个 pipeline 期望看到哪些 descriptor set layout”。
+    // 真正这次 draw 使用哪一个 descriptor set，要在录命令时再 bind。
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{};
+    pipelineLayoutCreateInfo.setLayoutCount = 1;
+    pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout_cube;
     pipelineLayout_cube.Create(pipelineLayoutCreateInfo);
 }
 
@@ -83,8 +123,8 @@ void CreateGeometry() {
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
         };
         gpuMemory.Create(allocateInfo);
-        gpuBuffer.BindMemory(gpuMemory); //绑定 buffer 和 memory
-        gpuMemory.Write(pData, size); // gpu地址映射+memcpy拷贝数据
+        gpuBuffer.BindMemory(gpuMemory); // 绑定 buffer 和 memory
+        gpuMemory.Write(pData, size);    // map + memcpy + unmap
     };
 
     // 顶点缓冲负责提供每个顶点的属性；
@@ -103,8 +143,85 @@ void CreateGeometry() {
         sizeof(cubeIndices));
 }
 
+void CreateUniformResources() {
+    // uniform buffer 存的是“每帧会变化，但当前 draw 共用”的小块数据，
+    // 这里就是 model/view/proj 三个矩阵。
+    uniformBuffer_cube.Create(sizeof(UniformBufferObject), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+
+    const auto requirements = uniformBuffer_cube.MemoryRequirements();
+    VkMemoryAllocateInfo allocateInfo = {
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = FindMemoryTypeIndex(
+            requirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+    };
+    uniformMemory_cube.Create(allocateInfo);
+    uniformBuffer_cube.BindMemory(uniformMemory_cube);
+}
+
+void CreateDescriptorSet() {
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolCreateInfo{};
+    poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCreateInfo.poolSizeCount = 1;
+    poolCreateInfo.pPoolSizes = &poolSize;
+    poolCreateInfo.maxSets = 1;
+
+    if (VkResult result = vkCreateDescriptorPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &descriptorPool_cube)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create descriptor pool!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = descriptorPool_cube;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &descriptorSetLayout_cube;
+
+    if (VkResult result = vkAllocateDescriptorSets(graphicsBase::Base().Device(), &allocateInfo, &descriptorSet_cube)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to allocate descriptor set!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = uniformBuffer_cube;
+    bufferInfo.offset = 0;
+    bufferInfo.range = sizeof(UniformBufferObject);
+
+    // 这一步把 uniform buffer 填进 descriptor set：
+    // shader 里 set 0 / binding 0 读到的，就是这块 buffer。
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = descriptorSet_cube;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.pBufferInfo = &bufferInfo;
+    vkUpdateDescriptorSets(graphicsBase::Base().Device(), 1, &write, 0, nullptr);
+}
+
+void UpdateUniformBuffer() {
+    static const auto startTime = std::chrono::high_resolution_clock::now();
+    const auto now = std::chrono::high_resolution_clock::now();
+    const float time = std::chrono::duration<float>(now - startTime).count();
+
+    UniformBufferObject ubo{};
+    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(60.0f), glm::vec3(0.4f, 1.0f, 0.2f));
+    ubo.view = glm::lookAt(glm::vec3(1.8f, 1.6f, 2.8f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    ubo.proj = glm::perspective(glm::radians(45.0f), float(windowSize.width) / float(windowSize.height), 0.1f, 10.0f);
+
+    // GLM 默认按 OpenGL 习惯生成投影矩阵，Y 方向需要翻一下才符合 Vulkan 屏幕空间。
+    ubo.proj[1][1] *= -1.0f;
+
+    uniformMemory_cube.Write(&ubo, sizeof(ubo));
+}
+
 void CreatePipeline() {
     // shader 现在不再依赖 SV_VertexID，而是从顶点缓冲读取位置和颜色。
+    // 顶点位置会先经过 model/view/proj，再输出到裁剪空间。
     static shaderModule vs("shaders/triangle.vs.spv");
     static shaderModule ps("shaders/triangle.ps.spv");
     static VkPipelineShaderStageCreateInfo shaderStageCreateInfos_cube[2] = {
@@ -117,7 +234,10 @@ void CreatePipeline() {
         pipelineCiPack.createInfo.layout = pipelineLayout_cube;
         pipelineCiPack.createInfo.renderPass = RenderPassAndFramebuffers().renderPass;
         pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_LINE; // polygonMode
+        pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_LINE;
+        pipelineCiPack.rasterizationStateCi.cullMode = VK_CULL_MODE_BACK_BIT;
+        pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        pipelineCiPack.rasterizationStateCi.lineWidth = 1.0f;
 
         // 把 CPU 侧的 Vertex 结构告诉 Vulkan：
         // binding 0，
@@ -128,14 +248,12 @@ void CreatePipeline() {
             .stride = sizeof(Vertex),
             .inputRate = VK_VERTEX_INPUT_RATE_VERTEX
         });
-        // 这里的 location 要和 shader 对上
         pipelineCiPack.vertexInputAttributes.push_back({
             .location = 0,
             .binding = 0,
             .format = VK_FORMAT_R32G32B32_SFLOAT,
             .offset = offsetof(Vertex, position)
         });
-        // 这里的 location 要和 shader 对上
         pipelineCiPack.vertexInputAttributes.push_back({
             .location = 1,
             .binding = 0,
@@ -162,15 +280,30 @@ void CreatePipeline() {
     Create();
 }
 
+void DestroyDescriptors() {
+    auto device = graphicsBase::Base().Device();
+    if (descriptorPool_cube)
+        vkDestroyDescriptorPool(device, descriptorPool_cube, nullptr);
+    if (descriptorSetLayout_cube)
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout_cube, nullptr);
+    descriptorPool_cube = VK_NULL_HANDLE;
+    descriptorSetLayout_cube = VK_NULL_HANDLE;
+    descriptorSet_cube = VK_NULL_HANDLE;
+}
+
 int main() {
     if (!InitializeWindow({ 1280, 720 }))
         return -1;
 
     const auto& [renderPass, framebuffers] = RenderPassAndFramebuffers();
+    CreateDescriptorSetLayout();
     CreateLayout();
     CreateGeometry();
+    CreateUniformResources();
+    CreateDescriptorSet();
     CreatePipeline();
 
+    // 先创建成 signaled，这样第一帧开头的 WaitAndReset 不会阻塞。
     fence fence(VK_FENCE_CREATE_SIGNALED_BIT);
     semaphore semaphore_imageIsAvailable;
     semaphore semaphore_renderingIsOver;
@@ -185,12 +318,30 @@ int main() {
         while (glfwGetWindowAttrib(pWindow, GLFW_ICONIFIED))
             glfwWaitEvents();
 
+        // 单帧 in-flight 写法：
+        // 每一帧开始先等上一帧 GPU 完成，再把 fence 重置回 unsignaled，
+        // 这样这次 vkQueueSubmit 才能合法地再次使用它。
+        fence.WaitAndReset();
+
+        UpdateUniformBuffer();
         graphicsBase::Base().SwapImage(semaphore_imageIsAvailable);
         auto i = graphicsBase::Base().CurrentImageIndex();
 
         commandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
         renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, clearColor);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_cube);
+
+        // pipeline 只知道“shader 需要一个 set 0”，
+        // 真正这次 draw 用哪一个 descriptor set，还是在命令里绑定。
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            pipelineLayout_cube,
+            0,
+            1,
+            &descriptorSet_cube,
+            0,
+            nullptr);
 
         // 顶点缓冲提供顶点属性，索引缓冲决定三角形怎么拼接这些顶点。
         VkBuffer vertexBuffers[] = { vertexBuffer_cube };
@@ -207,9 +358,10 @@ int main() {
 
         glfwPollEvents();
         TitleFps();
-        fence.WaitAndReset();
     }
 
+    vkDeviceWaitIdle(graphicsBase::Base().Device());
+    DestroyDescriptors();
     TerminateWindow();
     return 0;
 }
