@@ -331,8 +331,13 @@ int main() {
         while (glfwGetWindowAttrib(pWindow, GLFW_ICONIFIED))
             glfwWaitEvents();
 
+        static auto lastFrameTime = std::chrono::high_resolution_clock::now();
+        const auto now = std::chrono::high_resolution_clock::now();
+        const float deltaTime = std::chrono::duration<float>(now - lastFrameTime).count();
+        lastFrameTime = now;
+
         glfwPollEvents();
-        camera_main.UpdateFromInput(pWindow);
+        camera_main.UpdateFromInput(pWindow, deltaTime);
 
         // 单帧 in-flight 写法：
         // 每一帧开始先等上一帧 GPU 完成，再把 fence 重置回 unsignaled，
