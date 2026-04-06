@@ -1,5 +1,6 @@
 #include "GlfwGeneral.hpp"
 #include "easyVk.hpp"
+#include "Camera.hpp"
 
 using namespace vulkan;
 
@@ -33,6 +34,8 @@ deviceMemory uniformMemory_cube;    // uniform 缓冲绑定的显存
 VkDescriptorSetLayout descriptorSetLayout_cube = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_cube = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_cube = VK_NULL_HANDLE;
+
+camera camera_main;               // 主相机，只负责生成 view/proj
 
 const std::array<Vertex, 8> cubeVertices = {
     Vertex{ {-0.5f, -0.5f, -0.5f}, {1.f, 0.2f, 0.2f} },
@@ -209,12 +212,12 @@ void UpdateUniformBuffer() {
     const float time = std::chrono::duration<float>(now - startTime).count();
 
     UniformBufferObject ubo{};
-    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(60.0f), glm::vec3(0.4f, 1.0f, 0.2f));
-    ubo.view = glm::lookAt(glm::vec3(1.8f, 1.6f, 2.8f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    ubo.proj = glm::perspective(glm::radians(45.0f), float(windowSize.width) / float(windowSize.height), 0.1f, 10.0f);
+    ubo.model = glm::rotate(glm::mat4(1.0f), glm::radians(60.0f), glm::vec3(0.4f, 1.0f, 0.2f));
 
-    // GLM 默认按 OpenGL 习惯生成投影矩阵，Y 方向需要翻一下才符合 Vulkan 屏幕空间。
-    ubo.proj[1][1] *= -1.0f;
+    // 相机模块只负责观察和投影：
+    // view 表示“相机从哪里看”，proj 表示“怎么把 3D 压到屏幕上”。
+    ubo.view = camera_main.View(time);
+    ubo.proj = camera_main.Projection(windowSize);
 
     uniformMemory_cube.Write(&ubo, sizeof(ubo));
 }
