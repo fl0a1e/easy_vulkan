@@ -216,7 +216,7 @@ void UpdateUniformBuffer() {
 
     // 相机模块只负责观察和投影：
     // view 表示“相机从哪里看”，proj 表示“怎么把 3D 压到屏幕上”。
-    ubo.view = camera_main.View(time);
+    ubo.view = camera_main.View();
     ubo.proj = camera_main.Projection(windowSize);
 
     uniformMemory_cube.Write(&ubo, sizeof(ubo));
@@ -237,7 +237,7 @@ void CreatePipeline() {
         pipelineCiPack.createInfo.layout = pipelineLayout_cube;
         pipelineCiPack.createInfo.renderPass = RenderPassAndFramebuffers().renderPass;
         pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_LINE;
+        pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_FILL;
         pipelineCiPack.rasterizationStateCi.cullMode = VK_CULL_MODE_BACK_BIT;
         pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_CLOCKWISE;
         pipelineCiPack.rasterizationStateCi.lineWidth = 1.0f;
@@ -311,6 +311,7 @@ int main() {
     CreateUniformResources();
     CreateDescriptorSet();
     CreatePipeline();
+    camera_main.AttachToWindow(pWindow);
 
     // 先创建成 signaled，这样第一帧开头的 WaitAndReset 不会阻塞。
     fence fence(VK_FENCE_CREATE_SIGNALED_BIT);
@@ -329,6 +330,9 @@ int main() {
     while (!glfwWindowShouldClose(pWindow)) {
         while (glfwGetWindowAttrib(pWindow, GLFW_ICONIFIED))
             glfwWaitEvents();
+
+        glfwPollEvents();
+        camera_main.UpdateFromInput(pWindow);
 
         // 单帧 in-flight 写法：
         // 每一帧开始先等上一帧 GPU 完成，再把 fence 重置回 unsignaled，
@@ -368,7 +372,6 @@ int main() {
         graphicsBase::Base().SubmitCommandBuffer_Graphics(commandBuffer, semaphore_imageIsAvailable, semaphore_renderingIsOver, fence);
         graphicsBase::Base().PresentImage(semaphore_renderingIsOver);
 
-        glfwPollEvents();
         TitleFps();
     }
 

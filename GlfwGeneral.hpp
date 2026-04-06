@@ -102,8 +102,8 @@ void TitleFps() {
 	time1 = glfwGetTime();
 	++dframe;
 	// 每秒更新一次标题，避免每帧都改窗口标题
-	if ((dt = time1 - time0) >= 1) {
-		info.precision(1);
+	if ((dt = time1 - time0) >= 0.05) {
+		info.precision(0);
 		info << windowTitle << "    " << std::fixed << dframe / dt << " FPS";
 		glfwSetWindowTitle(pWindow, info.str().c_str());
 		info.str(""); //别忘了在设置完窗口标题后清空所用的stringstream
