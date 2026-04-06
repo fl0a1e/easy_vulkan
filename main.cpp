@@ -236,7 +236,7 @@ void CreatePipeline() {
         pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_LINE;
         pipelineCiPack.rasterizationStateCi.cullMode = VK_CULL_MODE_BACK_BIT;
-        pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_CLOCKWISE;
         pipelineCiPack.rasterizationStateCi.lineWidth = 1.0f;
 
         // 把 CPU 侧的 Vertex 结构告诉 Vulkan：
@@ -264,6 +264,10 @@ void CreatePipeline() {
         pipelineCiPack.viewports.emplace_back(0.f, 0.f, float(windowSize.width), float(windowSize.height), 0.f, 1.f);
         pipelineCiPack.scissors.emplace_back(VkOffset2D{}, windowSize);
         pipelineCiPack.multisampleStateCi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        // depth test 打开后，只有更靠近摄像机的片元才能覆盖已有结果。
+        pipelineCiPack.depthStencilStateCi.depthTestEnable = VK_TRUE;
+        pipelineCiPack.depthStencilStateCi.depthWriteEnable = VK_TRUE;
+        pipelineCiPack.depthStencilStateCi.depthCompareOp = VK_COMPARE_OP_LESS;
         pipelineCiPack.colorBlendAttachmentStates.push_back({ .colorWriteMask = 0b1111 });
         pipelineCiPack.UpdateAllArrays();
         pipelineCiPack.createInfo.stageCount = 2;
@@ -295,7 +299,9 @@ int main() {
     if (!InitializeWindow({ 1280, 720 }))
         return -1;
 
-    const auto& [renderPass, framebuffers] = RenderPassAndFramebuffers();
+    const auto& rpwf = RenderPassAndFramebuffers();
+    const auto& renderPass = rpwf.renderPass;
+    const auto& framebuffers = rpwf.framebuffers;
     CreateDescriptorSetLayout();
     CreateLayout();
     CreateGeometry();
@@ -312,7 +318,10 @@ int main() {
     commandPool commandPool(graphicsBase::Base().QueueFamilyIndex_Graphics(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
     commandPool.AllocateBuffers(commandBuffer);
 
-    VkClearValue clearColor = { .color = { 0.2f, 0.2f, 0.2f, 1.f } };
+    VkClearValue clearValues[] = {
+        { .color = { 0.2f, 0.2f, 0.2f, 1.f } },
+        { .depthStencil = { 1.0f, 0 } }
+    };
 
     while (!glfwWindowShouldClose(pWindow)) {
         while (glfwGetWindowAttrib(pWindow, GLFW_ICONIFIED))
@@ -328,7 +337,7 @@ int main() {
         auto i = graphicsBase::Base().CurrentImageIndex();
 
         commandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-        renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, clearColor);
+        renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, clearValues);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_cube);
 
         // pipeline 只知道“shader 需要一个 set 0”，

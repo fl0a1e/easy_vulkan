@@ -15,7 +15,7 @@ using namespace vulkan;
 // fullScreen: 指定是否以全屏初始化窗口
 // isResizable: 指定窗口是否可拉伸，游戏窗口通常是不可任意拉伸的
 // limitFrameRate: 指定是否将帧数限制到不超过屏幕刷新率，在本节先不实现这个参数的作用
-bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable = true, bool limitFrameRate = true) {
+bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable = true, bool limitFrameRate = false) {
 
 	if(!glfwInit()) {
 		std::cout << std::format("[ InitializeWindow ] ERROR\nFailed to initialize GLFW!\n");
