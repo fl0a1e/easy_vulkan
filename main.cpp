@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <filesystem>
 
 #include "GlfwGeneral.hpp"
@@ -25,11 +26,6 @@ struct UniformBufferObject {
     glm::mat4 proj;
 };
 
-struct loadedTexture {
-    int width = 0;
-    int height = 0;
-    std::vector<uint8_t> pixels;
-};
 
 pipelineLayout pipelineLayout_cube; // 立方体管线布局
 pipeline pipeline_cube;             // 立方体管线
@@ -45,6 +41,7 @@ VkImage textureImage_cube = VK_NULL_HANDLE;
 VkImageView textureImageView_cube = VK_NULL_HANDLE;
 VkSampler textureSampler_cube = VK_NULL_HANDLE;
 deviceMemory textureMemory_cube;    // 纹理图像绑定的显存
+uint32_t textureMipLevels_cube = 1; // 纹理实际创建的 mip 层数
 
 VkDescriptorSetLayout descriptorSetLayout_cube = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_cube = VK_NULL_HANDLE;
@@ -113,6 +110,15 @@ uint32_t FindMemoryTypeIndex(uint32_t memoryTypeBits, VkMemoryPropertyFlags requ
     abort();
 }
 
+uint32_t ComputeMipLevelCount(uint32_t width, uint32_t height) {
+    uint32_t mipLevels = 1;
+    while (width > 1 || height > 1) {
+        width = std::max(1u, width / 2);
+        height = std::max(1u, height / 2);
+        ++mipLevels;
+    }
+    return mipLevels;
+}
 std::filesystem::path FindAssetPath(const std::filesystem::path& relativePath) {
     const auto current = std::filesystem::current_path();
     const std::array<std::filesystem::path, 4> candidates = {
@@ -164,7 +170,9 @@ void CmdTransitionImageLayout(
     VkImage image,
     VkImageLayout oldLayout,
     VkImageLayout newLayout,
-    VkImageAspectFlags aspectMask)
+    VkImageAspectFlags aspectMask,
+    uint32_t baseMipLevel = 0,
+    uint32_t levelCount = 1)
 {
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -233,6 +241,100 @@ void CmdCopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer sourceBuffer, 
         &region);
 }
 
+void CmdGenerateMipmaps(VkCommandBuffer commandBuffer, VkImage image, VkFormat imageFormat, int32_t width, int32_t height, uint32_t mipLevels) {
+    VkFormatProperties formatProperties{};
+    vkGetPhysicalDeviceFormatProperties(graphicsBase::Base().PhysicalDevice(), imageFormat, &formatProperties);
+    if (!(formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) {
+        std::cout << std::format("[ main ] ERROR\nTexture format does not support linear blit for mipmap generation!\n");
+        abort();
+    }
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.image = image;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.subresourceRange.levelCount = 1;
+
+    int32_t mipWidth = width;
+    int32_t mipHeight = height;
+    for (uint32_t i = 1; i < mipLevels; ++i) {
+        barrier.subresourceRange.baseMipLevel = i - 1;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &barrier);
+
+        VkImageBlit blit{};
+        blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.srcSubresource.mipLevel = i - 1;
+        blit.srcSubresource.baseArrayLayer = 0;
+        blit.srcSubresource.layerCount = 1;
+        blit.srcOffsets[0] = { 0, 0, 0 };
+        blit.srcOffsets[1] = { mipWidth, mipHeight, 1 };
+        blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.dstSubresource.mipLevel = i;
+        blit.dstSubresource.baseArrayLayer = 0;
+        blit.dstSubresource.layerCount = 1;
+        blit.dstOffsets[0] = { 0, 0, 0 };
+        blit.dstOffsets[1] = {
+            std::max(1, mipWidth / 2),
+            std::max(1, mipHeight / 2),
+            1
+        };
+
+        vkCmdBlitImage(
+            commandBuffer,
+            image,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1,
+            &blit,
+            VK_FILTER_LINEAR);
+
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &barrier);
+
+        mipWidth = std::max(1, mipWidth / 2);
+        mipHeight = std::max(1, mipHeight / 2);
+    }
+
+    barrier.subresourceRange.baseMipLevel = mipLevels - 1;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier);
+}
 void CreateDescriptorSetLayout() {
     // set 0 / binding 0：给 VS 的 uniform buffer
     // set 0 / binding 1：给 PS 的 sampled image
@@ -332,6 +434,7 @@ void CreateTextureResources() {
     const auto texturePath = FindAssetPath("assets/texture.jpg");
     const auto texture = imageLoading::LoadRgba8(texturePath);
     const VkDeviceSize imageSize = static_cast<VkDeviceSize>(texture.pixels.size());
+    textureMipLevels_cube = ComputeMipLevelCount(texture.width, texture.height);
 
     buffer stagingBuffer;
     deviceMemory stagingMemory;
@@ -354,11 +457,11 @@ void CreateTextureResources() {
     imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
     imageCreateInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
     imageCreateInfo.extent = { texture.width, texture.height, 1 };
-    imageCreateInfo.mipLevels = 1;
+    imageCreateInfo.mipLevels = textureMipLevels_cube;
     imageCreateInfo.arrayLayers = 1;
     imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageCreateInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageCreateInfo.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -380,23 +483,18 @@ void CreateTextureResources() {
     }
 
     SubmitSingleTimeCommands([&](VkCommandBuffer commandBuffer) {
-        // 纹理上传的标准三步：
-        // 1. 让 image 进入可写的 transfer 目标布局
-        // 2. 把 staging buffer 里的像素拷进去
-        // 3. 再切到 fragment shader 采样用的只读布局
+        // 先把整张 image 的所有 mip 层都切到 transfer 目标布局，
+        // 再把原始像素写到第 0 层，最后在 GPU 上逐层生成更小的 mip。
         CmdTransitionImageLayout(
             commandBuffer,
             textureImage_cube,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            VK_IMAGE_ASPECT_COLOR_BIT);
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0,
+            textureMipLevels_cube);
         CmdCopyBufferToImage(commandBuffer, stagingBuffer, textureImage_cube, texture.width, texture.height);
-        CmdTransitionImageLayout(
-            commandBuffer,
-            textureImage_cube,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_IMAGE_ASPECT_COLOR_BIT);
+        CmdGenerateMipmaps(commandBuffer, textureImage_cube, VK_FORMAT_R8G8B8A8_SRGB, texture.width, texture.height, textureMipLevels_cube);
     });
 
     VkImageViewCreateInfo imageViewCreateInfo{};
@@ -406,13 +504,17 @@ void CreateTextureResources() {
     imageViewCreateInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
     imageViewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     imageViewCreateInfo.subresourceRange.baseMipLevel = 0;
-    imageViewCreateInfo.subresourceRange.levelCount = 1;
+    imageViewCreateInfo.subresourceRange.levelCount = textureMipLevels_cube;
     imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
     imageViewCreateInfo.subresourceRange.layerCount = 1;
     if (VkResult result = vkCreateImageView(graphicsBase::Base().Device(), &imageViewCreateInfo, nullptr, &textureImageView_cube)) {
         std::cout << std::format("[ main ] ERROR\nFailed to create texture image view!\nError code: {}\n", int32_t(result));
         abort();
     }
+
+    VkPhysicalDeviceFeatures features{};
+    vkGetPhysicalDeviceFeatures(graphicsBase::Base().PhysicalDevice(), &features);
+    const auto maxAnisotropy = graphicsBase::Base().PhysicalDeviceProperties().limits.maxSamplerAnisotropy;
 
     VkSamplerCreateInfo samplerCreateInfo{};
     samplerCreateInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -423,11 +525,11 @@ void CreateTextureResources() {
     samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerCreateInfo.mipLodBias = 0.0f;
-    samplerCreateInfo.anisotropyEnable = VK_FALSE;
-    samplerCreateInfo.maxAnisotropy = 1.0f;
+    samplerCreateInfo.anisotropyEnable = features.samplerAnisotropy;
+    samplerCreateInfo.maxAnisotropy = features.samplerAnisotropy ? maxAnisotropy : 1.0f;
     samplerCreateInfo.compareEnable = VK_FALSE;
     samplerCreateInfo.minLod = 0.0f;
-    samplerCreateInfo.maxLod = 0.0f;
+    samplerCreateInfo.maxLod = static_cast<float>(textureMipLevels_cube - 1);
     samplerCreateInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     samplerCreateInfo.unnormalizedCoordinates = VK_FALSE;
     if (VkResult result = vkCreateSampler(graphicsBase::Base().Device(), &samplerCreateInfo, nullptr, &textureSampler_cube)) {
@@ -435,7 +537,6 @@ void CreateTextureResources() {
         abort();
     }
 }
-
 void CreateDescriptorSet() {
     const std::array poolSizes = {
         VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
@@ -700,5 +801,11 @@ int main() {
     TerminateWindow();
     return 0;
 }
+
+
+
+
+
+
 
 
