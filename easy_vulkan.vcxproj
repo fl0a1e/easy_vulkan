@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -142,9 +142,11 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="ImageLoader.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Camera.hpp" />
+    <ClInclude Include="ImageLoader.hpp" />
     <ClInclude Include="easyVk.hpp" />
     <ClInclude Include="GlfwGeneral.hpp" />
     <ClInclude Include="vkBase+.h" />
@@ -159,3 +161,5 @@
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>
+
+

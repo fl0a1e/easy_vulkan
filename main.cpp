@@ -1,14 +1,18 @@
+#include <filesystem>
+
 #include "GlfwGeneral.hpp"
 #include "easyVk.hpp"
 #include "Camera.hpp"
+#include "ImageLoader.hpp"
 
 using namespace vulkan;
 
-// 一个顶点包含位置和颜色两部分属性。
-// pipeline 会根据这个结构体的内存布局，告诉 shader 去哪里读 Position/Color。
+// 一个顶点包含位置、调试用颜色和纹理坐标三部分属性。
+// 颜色保留着，方便后面继续做“顶点色 * 纹理”的混合调试。
 struct Vertex {
     glm::vec3 position;
     glm::vec3 color;
+    glm::vec2 uv;
 };
 
 // MVP 是最基础的 3D 变换链：
@@ -21,6 +25,12 @@ struct UniformBufferObject {
     glm::mat4 proj;
 };
 
+struct loadedTexture {
+    int width = 0;
+    int height = 0;
+    std::vector<uint8_t> pixels;
+};
+
 pipelineLayout pipelineLayout_cube; // 立方体管线布局
 pipeline pipeline_cube;             // 立方体管线
 buffer vertexBuffer_cube;           // 顶点缓冲
@@ -31,34 +41,62 @@ deviceMemory vertexMemory_cube;     // 顶点缓冲绑定的显存
 deviceMemory indexMemory_cube;      // 索引缓冲绑定的显存
 deviceMemory uniformMemory_cube;    // uniform 缓冲绑定的显存
 
+VkImage textureImage_cube = VK_NULL_HANDLE;
+VkImageView textureImageView_cube = VK_NULL_HANDLE;
+VkSampler textureSampler_cube = VK_NULL_HANDLE;
+deviceMemory textureMemory_cube;    // 纹理图像绑定的显存
+
 VkDescriptorSetLayout descriptorSetLayout_cube = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_cube = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_cube = VK_NULL_HANDLE;
 
-camera camera_main;               // 主相机，只负责生成 view/proj
+camera camera_main; // 主相机，只负责生成 view/proj
 
-const std::array<Vertex, 8> cubeVertices = {
-    Vertex{ {-0.5f, -0.5f, -0.5f}, {1.f, 0.2f, 0.2f} },
-    Vertex{ { 0.5f, -0.5f, -0.5f}, {0.2f, 1.f, 0.2f} },
-    Vertex{ { 0.5f,  0.5f, -0.5f}, {0.2f, 0.6f, 1.f} },
-    Vertex{ {-0.5f,  0.5f, -0.5f}, {1.f, 0.8f, 0.2f} },
-    Vertex{ {-0.5f, -0.5f,  0.5f}, {1.f, 0.2f, 1.f} },
-    Vertex{ { 0.5f, -0.5f,  0.5f}, {0.2f, 1.f, 1.f} },
-    Vertex{ { 0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f} },
-    Vertex{ {-0.5f,  0.5f,  0.5f}, {0.3f, 0.3f, 0.3f} }
+// 立方体每个面都需要自己独立的一套 UV，
+// 所以这里不再复用 8 个角点，而是拆成 24 个顶点。
+const std::array<Vertex, 24> cubeVertices = {
+    Vertex{ {-0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
+    Vertex{ { 0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
+    Vertex{ { 0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
+    Vertex{ {-0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} },
+
+    Vertex{ {-0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
+    Vertex{ { 0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
+    Vertex{ { 0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
+    Vertex{ {-0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} },
+
+    Vertex{ {-0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
+    Vertex{ {-0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
+    Vertex{ {-0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
+    Vertex{ {-0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} },
+
+    Vertex{ { 0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
+    Vertex{ { 0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
+    Vertex{ { 0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
+    Vertex{ { 0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} },
+
+    Vertex{ {-0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
+    Vertex{ { 0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
+    Vertex{ { 0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
+    Vertex{ {-0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} },
+
+    Vertex{ {-0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
+    Vertex{ {-0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
+    Vertex{ { 0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
+    Vertex{ { 0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} }
 };
 
 const std::array<uint16_t, 36> cubeIndices = {
     0, 1, 2, 0, 2, 3,
     4, 6, 5, 4, 7, 6,
-    0, 3, 7, 0, 7, 4,
-    1, 5, 6, 1, 6, 2,
-    3, 2, 6, 3, 6, 7,
-    0, 4, 5, 0, 5, 1
+    8, 9, 10, 8, 10, 11,
+    12, 13, 14, 12, 14, 15,
+    16, 17, 18, 16, 18, 19,
+    20, 22, 21, 20, 23, 22
 };
 
 // 找合适的内存类型
-// Vulkan 告诉你“这类 buffer 可以绑定哪些类型的内存”，再从物理设备支持的内存类型里，选一个满足要求的
+// Vulkan 告诉你“这类资源可以绑定哪些类型的内存”，再从物理设备支持的内存类型里选一个满足要求的。
 uint32_t FindMemoryTypeIndex(uint32_t memoryTypeBits, VkMemoryPropertyFlags requiredProperties) {
     const auto& memoryProperties = graphicsBase::Base().PhysicalDeviceMemoryProperties();
     for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i) {
@@ -75,6 +113,24 @@ uint32_t FindMemoryTypeIndex(uint32_t memoryTypeBits, VkMemoryPropertyFlags requ
     abort();
 }
 
+std::filesystem::path FindAssetPath(const std::filesystem::path& relativePath) {
+    const auto current = std::filesystem::current_path();
+    const std::array<std::filesystem::path, 4> candidates = {
+        current / relativePath,
+        current / "assets" / relativePath.filename(),
+        current.parent_path() / relativePath,
+        current.parent_path().parent_path() / relativePath
+    };
+
+    for (const auto& candidate : candidates) {
+        if (!candidate.empty() && std::filesystem::exists(candidate))
+            return candidate;
+    }
+
+    std::cout << std::format("[ main ] ERROR\nFailed to locate asset: {}\n", relativePath.string());
+    abort();
+}
+
 // 这个函数把渲染到屏幕所需的 render pass + framebuffer 集合缓存起来。
 // 做成静态局部变量，是因为这套对象全局只需要一份，后续直接复用即可。
 const auto& RenderPassAndFramebuffers() {
@@ -82,19 +138,129 @@ const auto& RenderPassAndFramebuffers() {
     return rpwf;
 }
 
+void SubmitSingleTimeCommands(const std::function<void(VkCommandBuffer)>& record) {
+    commandPool pool(graphicsBase::Base().QueueFamilyIndex_Graphics(), VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+    commandBuffer cmd;
+    pool.AllocateBuffers(cmd);
+    cmd.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+    record(cmd);
+    cmd.End();
+
+    fence submitFence;
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = cmd.Address();
+
+    if (VkResult result = vkQueueSubmit(graphicsBase::Base().Queue_Graphics(), 1, &submitInfo, submitFence)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to submit one-time command buffer!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+    submitFence.Wait();
+}
+
+void CmdTransitionImageLayout(
+    VkCommandBuffer commandBuffer,
+    VkImage image,
+    VkImageLayout oldLayout,
+    VkImageLayout newLayout,
+    VkImageAspectFlags aspectMask)
+{
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = aspectMask;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+    else {
+        std::cout << std::format(
+            "[ main ] ERROR\nUnsupported image layout transition: {} -> {}\n",
+            int32_t(oldLayout),
+            int32_t(newLayout));
+        abort();
+    }
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        srcStage,
+        dstStage,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier);
+}
+
+void CmdCopyBufferToImage(VkCommandBuffer commandBuffer, VkBuffer sourceBuffer, VkImage destinationImage, uint32_t width, uint32_t height) {
+    VkBufferImageCopy region{};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = { 0, 0, 0 };
+    region.imageExtent = { width, height, 1 };
+
+    vkCmdCopyBufferToImage(
+        commandBuffer,
+        sourceBuffer,
+        destinationImage,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &region);
+}
+
 void CreateDescriptorSetLayout() {
-    // 这里声明一个最小的 descriptor set layout：
-    // set 0 / binding 0 放一个给 VS 使用的 uniform buffer。
+    // set 0 / binding 0：给 VS 的 uniform buffer
+    // set 0 / binding 1：给 PS 的 sampled image
+    // set 0 / binding 2：给 PS 的 sampler
     VkDescriptorSetLayoutBinding uboBinding{};
     uboBinding.binding = 0;
     uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     uboBinding.descriptorCount = 1;
     uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
+    VkDescriptorSetLayoutBinding textureBinding{};
+    textureBinding.binding = 1;
+    textureBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    textureBinding.descriptorCount = 1;
+    textureBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding samplerBinding{};
+    samplerBinding.binding = 2;
+    samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    samplerBinding.descriptorCount = 1;
+    samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    const std::array bindings = { uboBinding, textureBinding, samplerBinding };
+
     VkDescriptorSetLayoutCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    createInfo.bindingCount = 1;
-    createInfo.pBindings = &uboBinding;
+    createInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    createInfo.pBindings = bindings.data();
 
     if (VkResult result = vkCreateDescriptorSetLayout(graphicsBase::Base().Device(), &createInfo, nullptr, &descriptorSetLayout_cube)) {
         std::cout << std::format("[ main ] ERROR\nFailed to create descriptor set layout!\nError code: {}\n", int32_t(result));
@@ -114,7 +280,7 @@ void CreateLayout() {
 // CreateGeometry()：把立方体数据真正送进 GPU
 void CreateGeometry() {
     auto CreateUploadBuffer = [](buffer& gpuBuffer, deviceMemory& gpuMemory, VkBufferUsageFlags usage, const void* pData, size_t size) {
-        // 这个示例先走最容易理解的路径：
+        // 几何缓冲这边先继续走最容易理解的路径：
         // 创建一个 HOST_VISIBLE | HOST_COHERENT 的缓冲，让 CPU 可以直接写入数据。
         gpuBuffer.Create(size, usage);
 
@@ -162,15 +328,125 @@ void CreateUniformResources() {
     uniformBuffer_cube.BindMemory(uniformMemory_cube);
 }
 
+void CreateTextureResources() {
+    const auto texturePath = FindAssetPath("assets/texture.jpg");
+    const auto texture = imageLoading::LoadRgba8(texturePath);
+    const VkDeviceSize imageSize = static_cast<VkDeviceSize>(texture.pixels.size());
+
+    buffer stagingBuffer;
+    deviceMemory stagingMemory;
+    stagingBuffer.Create(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    {
+        const auto requirements = stagingBuffer.MemoryRequirements();
+        VkMemoryAllocateInfo allocateInfo = {
+            .allocationSize = requirements.size,
+            .memoryTypeIndex = FindMemoryTypeIndex(
+                requirements.memoryTypeBits,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+        };
+        stagingMemory.Create(allocateInfo);
+        stagingBuffer.BindMemory(stagingMemory);
+        stagingMemory.Write(texture.pixels.data(), texture.pixels.size());
+    }
+
+    VkImageCreateInfo imageCreateInfo{};
+    imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageCreateInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    imageCreateInfo.extent = { texture.width, texture.height, 1 };
+    imageCreateInfo.mipLevels = 1;
+    imageCreateInfo.arrayLayers = 1;
+    imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageCreateInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    if (VkResult result = vkCreateImage(graphicsBase::Base().Device(), &imageCreateInfo, nullptr, &textureImage_cube)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create texture image!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(graphicsBase::Base().Device(), textureImage_cube, &requirements);
+    VkMemoryAllocateInfo allocateInfo = {
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = FindMemoryTypeIndex(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+    };
+    textureMemory_cube.Create(allocateInfo);
+    if (VkResult result = vkBindImageMemory(graphicsBase::Base().Device(), textureImage_cube, textureMemory_cube, 0)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to bind texture image memory!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    SubmitSingleTimeCommands([&](VkCommandBuffer commandBuffer) {
+        // 纹理上传的标准三步：
+        // 1. 让 image 进入可写的 transfer 目标布局
+        // 2. 把 staging buffer 里的像素拷进去
+        // 3. 再切到 fragment shader 采样用的只读布局
+        CmdTransitionImageLayout(
+            commandBuffer,
+            textureImage_cube,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_ASPECT_COLOR_BIT);
+        CmdCopyBufferToImage(commandBuffer, stagingBuffer, textureImage_cube, texture.width, texture.height);
+        CmdTransitionImageLayout(
+            commandBuffer,
+            textureImage_cube,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_IMAGE_ASPECT_COLOR_BIT);
+    });
+
+    VkImageViewCreateInfo imageViewCreateInfo{};
+    imageViewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    imageViewCreateInfo.image = textureImage_cube;
+    imageViewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    imageViewCreateInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    imageViewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    imageViewCreateInfo.subresourceRange.baseMipLevel = 0;
+    imageViewCreateInfo.subresourceRange.levelCount = 1;
+    imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
+    imageViewCreateInfo.subresourceRange.layerCount = 1;
+    if (VkResult result = vkCreateImageView(graphicsBase::Base().Device(), &imageViewCreateInfo, nullptr, &textureImageView_cube)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create texture image view!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    VkSamplerCreateInfo samplerCreateInfo{};
+    samplerCreateInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerCreateInfo.magFilter = VK_FILTER_LINEAR;
+    samplerCreateInfo.minFilter = VK_FILTER_LINEAR;
+    samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerCreateInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerCreateInfo.mipLodBias = 0.0f;
+    samplerCreateInfo.anisotropyEnable = VK_FALSE;
+    samplerCreateInfo.maxAnisotropy = 1.0f;
+    samplerCreateInfo.compareEnable = VK_FALSE;
+    samplerCreateInfo.minLod = 0.0f;
+    samplerCreateInfo.maxLod = 0.0f;
+    samplerCreateInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerCreateInfo.unnormalizedCoordinates = VK_FALSE;
+    if (VkResult result = vkCreateSampler(graphicsBase::Base().Device(), &samplerCreateInfo, nullptr, &textureSampler_cube)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create texture sampler!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+}
+
 void CreateDescriptorSet() {
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize.descriptorCount = 1;
+    const std::array poolSizes = {
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1 },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, 1 }
+    };
 
     VkDescriptorPoolCreateInfo poolCreateInfo{};
     poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolCreateInfo.poolSizeCount = 1;
-    poolCreateInfo.pPoolSizes = &poolSize;
+    poolCreateInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolCreateInfo.pPoolSizes = poolSizes.data();
     poolCreateInfo.maxSets = 1;
 
     if (VkResult result = vkCreateDescriptorPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &descriptorPool_cube)) {
@@ -194,16 +470,37 @@ void CreateDescriptorSet() {
     bufferInfo.offset = 0;
     bufferInfo.range = sizeof(UniformBufferObject);
 
-    // 这一步把 uniform buffer 填进 descriptor set：
-    // shader 里 set 0 / binding 0 读到的，就是这块 buffer。
-    VkWriteDescriptorSet write{};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = descriptorSet_cube;
-    write.dstBinding = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    write.pBufferInfo = &bufferInfo;
-    vkUpdateDescriptorSets(graphicsBase::Base().Device(), 1, &write, 0, nullptr);
+    VkDescriptorImageInfo textureInfo{};
+    textureInfo.imageView = textureImageView_cube;
+    textureInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkDescriptorImageInfo samplerInfo{};
+    samplerInfo.sampler = textureSampler_cube;
+
+    // descriptor set 里记录的不是数据本体，而是“shader 应该去哪里读这些资源”的描述信息。
+    std::array<VkWriteDescriptorSet, 3> writes{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = descriptorSet_cube;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[0].pBufferInfo = &bufferInfo;
+
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = descriptorSet_cube;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    writes[1].pImageInfo = &textureInfo;
+
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = descriptorSet_cube;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    writes[2].pImageInfo = &samplerInfo;
+
+    vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
 void UpdateUniformBuffer() {
@@ -212,7 +509,7 @@ void UpdateUniformBuffer() {
     const float time = std::chrono::duration<float>(now - startTime).count();
 
     UniformBufferObject ubo{};
-    ubo.model = glm::rotate(glm::mat4(1.0f), glm::radians(60.0f), glm::vec3(0.4f, 1.0f, 0.2f));
+    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(60.0f), glm::vec3(0.4f, 1.0f, 0.2f));
 
     // 相机模块只负责观察和投影：
     // view 表示“相机从哪里看”，proj 表示“怎么把 3D 压到屏幕上”。
@@ -223,8 +520,8 @@ void UpdateUniformBuffer() {
 }
 
 void CreatePipeline() {
-    // shader 现在不再依赖 SV_VertexID，而是从顶点缓冲读取位置和颜色。
-    // 顶点位置会先经过 model/view/proj，再输出到裁剪空间。
+    // shader 现在从顶点缓冲读取位置、颜色、UV，
+    // PS 再根据 descriptor set 里的纹理资源做采样。
     static shaderModule vs("shaders/triangle.vs.spv");
     static shaderModule ps("shaders/triangle.ps.spv");
     static VkPipelineShaderStageCreateInfo shaderStageCreateInfos_cube[2] = {
@@ -242,10 +539,8 @@ void CreatePipeline() {
         pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_CLOCKWISE;
         pipelineCiPack.rasterizationStateCi.lineWidth = 1.0f;
 
-        // 把 CPU 侧的 Vertex 结构告诉 Vulkan：
-        // binding 0，
-        // 每次前进一个 Vertex，
-        // location 0 是位置，location 1 是颜色。
+        // binding 0 是整条顶点流；
+        // location 0/1/2 分别对应 position / color / uv。
         pipelineCiPack.vertexInputBindings.push_back({
             .binding = 0,
             .stride = sizeof(Vertex),
@@ -263,11 +558,16 @@ void CreatePipeline() {
             .format = VK_FORMAT_R32G32B32_SFLOAT,
             .offset = offsetof(Vertex, color)
         });
+        pipelineCiPack.vertexInputAttributes.push_back({
+            .location = 2,
+            .binding = 0,
+            .format = VK_FORMAT_R32G32_SFLOAT,
+            .offset = offsetof(Vertex, uv)
+        });
 
         pipelineCiPack.viewports.emplace_back(0.f, 0.f, float(windowSize.width), float(windowSize.height), 0.f, 1.f);
         pipelineCiPack.scissors.emplace_back(VkOffset2D{}, windowSize);
         pipelineCiPack.multisampleStateCi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        // depth test 打开后，只有更靠近摄像机的片元才能覆盖已有结果。
         pipelineCiPack.depthStencilStateCi.depthTestEnable = VK_TRUE;
         pipelineCiPack.depthStencilStateCi.depthWriteEnable = VK_TRUE;
         pipelineCiPack.depthStencilStateCi.depthCompareOp = VK_COMPARE_OP_LESS;
@@ -285,6 +585,19 @@ void CreatePipeline() {
     graphicsBase::Base().AddCallback_CreateSwapchain(Create);
     graphicsBase::Base().AddCallback_DestroySwapchain(Destroy);
     Create();
+}
+
+void DestroyTextureResources() {
+    auto device = graphicsBase::Base().Device();
+    if (textureSampler_cube)
+        vkDestroySampler(device, textureSampler_cube, nullptr);
+    if (textureImageView_cube)
+        vkDestroyImageView(device, textureImageView_cube, nullptr);
+    if (textureImage_cube)
+        vkDestroyImage(device, textureImage_cube, nullptr);
+    textureSampler_cube = VK_NULL_HANDLE;
+    textureImageView_cube = VK_NULL_HANDLE;
+    textureImage_cube = VK_NULL_HANDLE;
 }
 
 void DestroyDescriptors() {
@@ -309,6 +622,7 @@ int main() {
     CreateLayout();
     CreateGeometry();
     CreateUniformResources();
+    CreateTextureResources();
     CreateDescriptorSet();
     CreatePipeline();
     camera_main.AttachToWindow(pWindow);
@@ -382,6 +696,9 @@ int main() {
 
     vkDeviceWaitIdle(graphicsBase::Base().Device());
     DestroyDescriptors();
+    DestroyTextureResources();
     TerminateWindow();
     return 0;
 }
+
+

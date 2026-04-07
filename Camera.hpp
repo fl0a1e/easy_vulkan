@@ -80,7 +80,7 @@ private:
                 const float deltaX = static_cast<float>(cursorX - lastCursorX);
                 const float deltaY = static_cast<float>(cursorY - lastCursorY);
                 yaw += deltaX * rotateSensitivity;
-                pitch += deltaY * rotateSensitivity;
+                pitch -= deltaY * rotateSensitivity;
                 if (pitch < glm::radians(-80.0f))
                     pitch = glm::radians(-80.0f);
                 else if (pitch > glm::radians(80.0f))
