@@ -10,8 +10,9 @@
 
 - [x] Vulkan 基础框架，渲染最初的三角形 - 参考 [EasyVulkan](https://easyvulkan.github.io)
 - [x] 加入DeviceMemory、Buffer、DescriptorSet，渲染基础立方体
-- [ ] 纹理、光照接入
 - [x] Camera 系统
+- [x] 纹理、光照接入
+- [x] .obj 模型加载器
 - [ ] 延迟管线
 - [ ] 光追管线接入
 - [ ] RDG

@@ -14,10 +14,13 @@ using namespace vulkan;
 // view 表示摄像机观察，
 // proj 负责把 3D 投影到屏幕。
 struct UniformBufferObject {
-    glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
 };
+
+struct PushConstantObject {
+    glm::mat4 model;
+}; // 64bytes
 
 // 光照信息
 // 平行光
@@ -30,6 +33,13 @@ struct Light {
     float _pad3;
 };
 
+struct RenderObject {
+    glm::vec3 position;
+    glm::vec3 rotationAxis;
+    float rotationSpeed;
+    float rotationOffset;
+    glm::vec3 scale;
+};
 
 pipelineLayout pipelineLayout_cube; // 立方体管线布局
 pipeline pipeline_cube;             // 立方体管线
@@ -58,7 +68,15 @@ camera camera_main; // 主相机，只负责生成 view/proj
 
 uint32_t meshIndexCount = 0;
 
-const Light lightData{ {3.0f, 3.0f,3.0f},0, {-1.0f ,-1.0f, -1.0f}, 0,{0.f, 0.7f, 0.2f} };
+std::vector<RenderObject> renderObjects = {
+    { {-3.f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(20.0f), 0.0f, {0.05f, 0.05f, 0.05f} },
+    { {-1.5f, 0.0f, 1.5f}, {0.0f, 1.0f, 0.0f}, glm::radians(35.0f), 0.8f, {0.05f, 0.05f, 0.05f} },
+    { { 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, 0.0f, 0.0f, {0.05f, 0.05f, 0.05f} },
+    { { 1.5f, 0.0f,-1.5f}, {0.0f, 1.0f, 0.0f}, glm::radians(28.0f), 1.6f, {0.05f, 0.05f, 0.05f} },
+    { { 3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(18.0f), 2.4f, {0.05f, 0.05f, 0.05f} }
+};
+
+const Light lightData{ {3.0f, 3.0f,3.0f},0, {-1.0f ,-1.0f, -1.0f}, 0,{1.f, 1.f, 1.f} };
 
 // 找合适的内存类型
 // Vulkan 告诉你“这类资源可以绑定哪些类型的内存”，再从物理设备支持的内存类型里选一个满足要求的。
@@ -348,9 +366,16 @@ void CreateDescriptorSetLayout() {
 void CreateLayout() {
     // pipeline layout 描述的是“这个 pipeline 期望看到哪些 descriptor set layout”。
     // 真正这次 draw 使用哪一个 descriptor set，要在录命令时再 bind。
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(PushConstantObject);
+
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{};
     pipelineLayoutCreateInfo.setLayoutCount = 1;
     pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout_cube;
+    pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
+    pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
     pipelineLayout_cube.Create(pipelineLayoutCreateInfo);
 }
 
@@ -608,15 +633,18 @@ void CreateDescriptorSet() {
     vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
-void UpdateUniformBuffer() {
-    static const auto startTime = std::chrono::high_resolution_clock::now();
-    const auto now = std::chrono::high_resolution_clock::now();
-    const float time = std::chrono::duration<float>(now - startTime).count();
+glm::mat4 BuildModelMatrix(const RenderObject& object, float time) {
+    glm::mat4 translation = glm::translate(glm::mat4(1.0f), object.position);
+    glm::mat4 rotation = glm::rotate(
+        glm::mat4(1.0f),
+        object.rotationOffset + time * object.rotationSpeed,
+        object.rotationAxis);
+    glm::mat4 scale = glm::scale(glm::mat4(1.0f), object.scale);
+    return translation * rotation * scale;
+}
 
+void UpdateUniformBuffer() {
     UniformBufferObject ubo{};
-    glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), time * glm::radians(60.0f), glm::vec3(0.f, 1.0f, 0.f));
-    glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.05f));
-    ubo.model = rotation * scale;
 
     // 相机模块只负责观察和投影：
     // view 表示“相机从哪里看”，proj 表示“怎么把 3D 压到屏幕上”。
@@ -747,9 +775,11 @@ int main() {
     commandPool.AllocateBuffers(commandBuffer);
 
     VkClearValue clearValues[] = {
-        { .color = { 0.2f, 0.2f, 0.2f, 1.f } },
+        { .color = { 0.f, 0.f, 0.f, 1.f } },
         { .depthStencil = { 1.0f, 0 } }
     };
+
+    static const auto sceneStartTime = std::chrono::high_resolution_clock::now();
 
     while (!glfwWindowShouldClose(pWindow)) {
         while (glfwGetWindowAttrib(pWindow, GLFW_ICONIFIED))
@@ -758,6 +788,7 @@ int main() {
         static auto lastFrameTime = std::chrono::high_resolution_clock::now();
         const auto now = std::chrono::high_resolution_clock::now();
         const float deltaTime = std::chrono::duration<float>(now - lastFrameTime).count();
+        const float sceneTime = std::chrono::duration<float>(now - sceneStartTime).count();
         lastFrameTime = now;
 
         glfwPollEvents();
@@ -793,7 +824,17 @@ int main() {
         VkDeviceSize offsets[] = { 0 };
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
         vkCmdBindIndexBuffer(commandBuffer, indexBuffer_cube, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(commandBuffer, meshIndexCount, 1, 0, 0, 0);
+        for (const auto& renderObject : renderObjects) {
+            PushConstantObject pushConstant{ .model = BuildModelMatrix(renderObject, sceneTime) };
+            vkCmdPushConstants(
+                commandBuffer,
+                pipelineLayout_cube,
+                VK_SHADER_STAGE_VERTEX_BIT,
+                0,
+                sizeof(pushConstant),
+                &pushConstant);
+            vkCmdDrawIndexed(commandBuffer, meshIndexCount, 1, 0, 0, 0);
+        }
 
         renderPass.CmdEnd(commandBuffer);
         commandBuffer.End();
@@ -810,6 +851,9 @@ int main() {
     TerminateWindow();
     return 0;
 }
+
+
+
 
 
 

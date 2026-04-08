@@ -1,9 +1,16 @@
 cbuffer CameraData : register(b0)
 {
-    float4x4 model;
     float4x4 view;
     float4x4 proj;
 };
+
+struct ModelData
+{
+    float4x4 model;
+};
+
+[[vk::push_constant]]
+ModelData pushConstants;
 
 struct VSInput
 {
@@ -23,15 +30,12 @@ VSOutput main(VSInput input)
 {
     VSOutput o;
 
-    // 顶点缓冲里的局部空间坐标，会依次经过 model / view / proj 变换，
-    // 最后写进 SV_Position，交给后面的裁剪和光栅化阶段使用。
     float4 localPosition = float4(input.Position, 1.0f);
-    float4 worldPosition = mul(model, localPosition);
+    float4 worldPosition = mul(pushConstants.model, localPosition);
     float4 viewPosition = mul(view, worldPosition);
     o.Position = mul(proj, viewPosition);
 
-    // 法线需要随模型一起变换，供像素着色器做最基础的漫反射计算。
-    o.WorldNormal = normalize(mul((float3x3)model, input.Normal));
+    o.WorldNormal = normalize(mul((float3x3)pushConstants.model, input.Normal));
     o.UV = input.UV;
     return o;
 }
