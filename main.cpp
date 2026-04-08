@@ -16,11 +16,14 @@ using namespace vulkan;
 struct UniformBufferObject {
     glm::mat4 view;
     glm::mat4 proj;
+    glm::vec3 cameraPosition;
+    float _pad0;
 };
 
 struct PushConstantObject {
     glm::mat4 model;
-}; // 64bytes
+    glm::vec4 meshInfo;
+};
 
 // 光照信息
 // 平行光
@@ -33,7 +36,17 @@ struct Light {
     float _pad3;
 };
 
+struct MeshResource {
+    buffer vertexBuffer;
+    buffer indexBuffer;
+    deviceMemory vertexMemory;
+    deviceMemory indexMemory;
+    uint32_t indexCount = 0;
+    bool hasTexcoord = true;
+};
+
 struct RenderObject {
+    uint32_t meshIndex;
     glm::vec3 position;
     glm::vec3 rotationAxis;
     float rotationSpeed;
@@ -43,12 +56,8 @@ struct RenderObject {
 
 pipelineLayout pipelineLayout_cube; // 立方体管线布局
 pipeline pipeline_cube;             // 立方体管线
-buffer vertexBuffer_cube;           // 顶点缓冲
-buffer indexBuffer_cube;            // 索引缓冲
 buffer uniformBuffer_cube;          // uniform 缓冲
 
-deviceMemory vertexMemory_cube;     // 顶点缓冲绑定的显存
-deviceMemory indexMemory_cube;      // 索引缓冲绑定的显存
 deviceMemory uniformMemory_cube;    // uniform 缓冲绑定的显存
 
 VkImage textureImage_cube = VK_NULL_HANDLE;
@@ -66,15 +75,8 @@ VkDescriptorSet descriptorSet_cube = VK_NULL_HANDLE;
 
 camera camera_main; // 主相机，只负责生成 view/proj
 
-uint32_t meshIndexCount = 0;
-
-std::vector<RenderObject> renderObjects = {
-    { {-3.f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(20.0f), 0.0f, {0.05f, 0.05f, 0.05f} },
-    { {-1.5f, 0.0f, 1.5f}, {0.0f, 1.0f, 0.0f}, glm::radians(35.0f), 0.8f, {0.05f, 0.05f, 0.05f} },
-    { { 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, 0.0f, 0.0f, {0.05f, 0.05f, 0.05f} },
-    { { 1.5f, 0.0f,-1.5f}, {0.0f, 1.0f, 0.0f}, glm::radians(28.0f), 1.6f, {0.05f, 0.05f, 0.05f} },
-    { { 3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(18.0f), 2.4f, {0.05f, 0.05f, 0.05f} }
-};
+std::vector<MeshResource> meshResources;
+std::vector<RenderObject> renderObjects;
 
 const Light lightData{ {3.0f, 3.0f,3.0f},0, {-1.0f ,-1.0f, -1.0f}, 0,{1.f, 1.f, 1.f} };
 
@@ -130,6 +132,38 @@ const auto& RenderPassAndFramebuffers() {
     return rpwf;
 }
 
+std::vector<std::filesystem::path> DiscoverMeshPaths() {
+    std::vector<std::filesystem::path> paths;
+    const auto assetsDirectory = FindAssetPath("assets");
+    for (const auto& entry : std::filesystem::directory_iterator(assetsDirectory)) {
+        if (!entry.is_regular_file())
+            continue;
+        if (entry.path().extension() == ".obj")
+            paths.push_back(entry.path());
+    }
+
+    std::ranges::sort(paths);
+    if (paths.empty()) {
+        std::cout << std::format("[ main ] ERROR\nNo obj files were found under: {}\n", assetsDirectory.string());
+        abort();
+    }
+    return paths;
+}
+
+std::vector<RenderObject> CreateDefaultRenderObjects(uint32_t meshCount) {
+    if (meshCount == 0) {
+        std::cout << "[ main ] ERROR\nCannot create render objects without mesh resources!\n";
+        abort();
+    }
+
+    return {
+        { 0 % meshCount, {-3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(22.0f), 0.0f, {0.0005f, 0.0005f, 0.0005f} },
+        { 1 % meshCount, {-1.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(35.0f), 0.8f, {0.5f, 0.5f, 0.5f} },
+        { 2 % meshCount, { 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(20.0f), 0.0f, {3.f, 3.f, 3.f} },
+        { 3 % meshCount, { 1.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(28.0f), 1.6f, {0.125f, 0.125f, 0.125f} },
+        { 4 % meshCount, { 3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(18.0f), 2.4f, {0.05f, 0.05f, 0.05f} }
+    };
+}
 void SubmitSingleTimeCommands(const std::function<void(VkCommandBuffer)>& record) {
     commandPool pool(graphicsBase::Base().QueueFamilyIndex_Graphics(), VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
     commandBuffer cmd;
@@ -380,7 +414,7 @@ void CreateLayout() {
 }
 
 // CreateGeometry()：把模型数据真正送进 GPU
-void CreateGeometry(const std::vector<modelLoading::Vertex>& vertices, const std::vector<uint32_t>& indices) {
+MeshResource CreateMeshResource(const modelLoading::MeshData& meshData) {
     auto CreateUploadBuffer = [](buffer& gpuBuffer, deviceMemory& gpuMemory, VkBufferUsageFlags usage, const void* pData, size_t size) {
         // 几何缓冲这边先继续走最容易理解的路径：
         // 创建一个 HOST_VISIBLE | HOST_COHERENT 的缓冲，让 CPU 可以直接写入数据。
@@ -398,24 +432,31 @@ void CreateGeometry(const std::vector<modelLoading::Vertex>& vertices, const std
         gpuMemory.Write(pData, size);    // map + memcpy + unmap
     };
 
+    MeshResource meshResource{};
+
     // 顶点缓冲负责提供每个顶点的属性；
     // 索引缓冲负责复用顶点，避免同一个角点在每个三角形里重复存一份。
     CreateUploadBuffer(
-        vertexBuffer_cube,
-        vertexMemory_cube,
+        meshResource.vertexBuffer,
+        meshResource.vertexMemory,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        vertices.data(),
-        sizeof(modelLoading::Vertex) * vertices.size());
+        meshData.vertices.data(),
+        sizeof(modelLoading::Vertex) * meshData.vertices.size());
     CreateUploadBuffer(
-        indexBuffer_cube,
-        indexMemory_cube,
+        meshResource.indexBuffer,
+        meshResource.indexMemory,
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        indices.data(),
-        sizeof(uint32_t) * indices.size());
+        meshData.indices.data(),
+        sizeof(uint32_t) * meshData.indices.size());
 
-    meshIndexCount = static_cast<uint32_t>(indices.size());
+    meshResource.indexCount = static_cast<uint32_t>(meshData.indices.size());
+    meshResource.hasTexcoord = meshData.hasTexcoord;
+    return meshResource;
 }
 
+void DestroyMeshResources() {
+    meshResources.clear();
+}
 void CreateUniformResources() {
     // uniform buffer 存的是“每帧会变化，但当前 draw 共用”的小块数据，
     // 这里就是 model/view/proj 三个矩阵。
@@ -650,6 +691,7 @@ void UpdateUniformBuffer() {
     // view 表示“相机从哪里看”，proj 表示“怎么把 3D 压到屏幕上”。
     ubo.view = camera_main.View();
     ubo.proj = camera_main.Projection(windowSize);
+    ubo.cameraPosition = camera_main.position;
 
     uniformMemory_cube.Write(&ubo, sizeof(ubo));
 }
@@ -755,9 +797,14 @@ int main() {
     const auto& framebuffers = rpwf.framebuffers;
     CreateDescriptorSetLayout();
     CreateLayout();
-    const auto meshPath = FindAssetPath("assets/tree.obj");
-    const auto mesh = modelLoading::LoadObj(meshPath);
-    CreateGeometry(mesh.vertices, mesh.indices);
+    const auto meshPaths = DiscoverMeshPaths();
+    meshResources.clear();
+    meshResources.reserve(meshPaths.size());
+    for (const auto& meshPath : meshPaths) {
+        const auto mesh = modelLoading::LoadObj(meshPath);
+        meshResources.push_back(CreateMeshResource(mesh));
+    }
+    renderObjects = CreateDefaultRenderObjects(static_cast<uint32_t>(meshResources.size()));
     CreateUniformResources();
     CreateLightResources();
     CreateTextureResources();
@@ -820,12 +867,22 @@ int main() {
             nullptr);
 
         // 顶点缓冲提供顶点属性，索引缓冲决定三角形怎么拼接这些顶点。
-        VkBuffer vertexBuffers[] = { vertexBuffer_cube };
-        VkDeviceSize offsets[] = { 0 };
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(commandBuffer, indexBuffer_cube, 0, VK_INDEX_TYPE_UINT32);
         for (const auto& renderObject : renderObjects) {
-            PushConstantObject pushConstant{ .model = BuildModelMatrix(renderObject, sceneTime) };
+            if (renderObject.meshIndex >= meshResources.size()) {
+                std::cout << std::format("[ main ] ERROR\nInvalid mesh index: {}\n", renderObject.meshIndex);
+                abort();
+            }
+
+            const auto& mesh = meshResources[renderObject.meshIndex];
+            VkBuffer vertexBuffers[] = { mesh.vertexBuffer };
+            VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+            PushConstantObject pushConstant{
+                .model = BuildModelMatrix(renderObject, sceneTime),
+                .meshInfo = glm::vec4(mesh.hasTexcoord ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f)
+            };
             vkCmdPushConstants(
                 commandBuffer,
                 pipelineLayout_cube,
@@ -833,7 +890,7 @@ int main() {
                 0,
                 sizeof(pushConstant),
                 &pushConstant);
-            vkCmdDrawIndexed(commandBuffer, meshIndexCount, 1, 0, 0, 0);
+            vkCmdDrawIndexed(commandBuffer, mesh.indexCount, 1, 0, 0, 0);
         }
 
         renderPass.CmdEnd(commandBuffer);
@@ -848,9 +905,17 @@ int main() {
     vkDeviceWaitIdle(graphicsBase::Base().Device());
     DestroyDescriptors();
     DestroyTextureResources();
+    DestroyMeshResources();
     TerminateWindow();
     return 0;
 }
+
+
+
+
+
+
+
 
 
 

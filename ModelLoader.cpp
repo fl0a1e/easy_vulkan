@@ -55,12 +55,13 @@ namespace modelLoading {
 
         MeshData mesh;
         std::unordered_map<VertexKey, uint32_t, VertexKeyHash> vertexToIndex;
+        bool shouldGenerateNormals = false;
 
         for (const auto& shape : shapes) {
             for (const auto& index : shape.mesh.indices) {
-                if (index.vertex_index < 0 || index.normal_index < 0 || index.texcoord_index < 0) {
+                if (index.vertex_index < 0) {
                     std::cout << std::format(
-                        "[ ModelLoader ] ERROR\nObj must provide position, normal and uv for every vertex: {}\n",
+                        "[ ModelLoader ] ERROR\nObj must provide vertex positions for every vertex: {}\n",
                         filepath.string());
                     abort();
                 }
@@ -77,12 +78,14 @@ namespace modelLoading {
                 }
 
                 const size_t positionBase = static_cast<size_t>(index.vertex_index) * 3;
-                const size_t normalBase = static_cast<size_t>(index.normal_index) * 3;
-                const size_t uvBase = static_cast<size_t>(index.texcoord_index) * 2;
+                const bool hasNormal = index.normal_index >= 0;
+                const size_t normalBase = hasNormal ? static_cast<size_t>(index.normal_index) * 3 : 0;
+                const bool hasTexcoord = index.texcoord_index >= 0;
+                const size_t uvBase = hasTexcoord ? static_cast<size_t>(index.texcoord_index) * 2 : 0;
 
                 if (positionBase + 2 >= attrib.vertices.size() ||
-                    normalBase + 2 >= attrib.normals.size() ||
-                    uvBase + 1 >= attrib.texcoords.size()) {
+                    (hasNormal && normalBase + 2 >= attrib.normals.size()) ||
+                    (hasTexcoord && uvBase + 1 >= attrib.texcoords.size())) {
                     std::cout << std::format(
                         "[ ModelLoader ] ERROR\nObj index is out of range: {}\n",
                         filepath.string());
@@ -95,15 +98,27 @@ namespace modelLoading {
                     attrib.vertices[positionBase + 1],
                     attrib.vertices[positionBase + 2]
                 };
-                vertex.normal = {
-                    attrib.normals[normalBase + 0],
-                    attrib.normals[normalBase + 1],
-                    attrib.normals[normalBase + 2]
-                };
-                vertex.uv = {
-                    attrib.texcoords[uvBase + 0],
-                    1.0f - attrib.texcoords[uvBase + 1]
-                };
+                if (hasNormal) {
+                    vertex.normal = {
+                        attrib.normals[normalBase + 0],
+                        attrib.normals[normalBase + 1],
+                        attrib.normals[normalBase + 2]
+                    };
+                }
+                else {
+                    vertex.normal = { 0.0f, 0.0f, 0.0f };
+                    shouldGenerateNormals = true;
+                }
+                if (hasTexcoord) {
+                    vertex.uv = {
+                        attrib.texcoords[uvBase + 0],
+                        1.0f - attrib.texcoords[uvBase + 1]
+                    };
+                }
+                else {
+                    vertex.uv = { 0.0f, 0.0f };
+                    mesh.hasTexcoord = false;
+                }
 
                 const uint32_t newIndex = static_cast<uint32_t>(mesh.vertices.size());
                 mesh.vertices.push_back(vertex);
@@ -115,6 +130,40 @@ namespace modelLoading {
         if (mesh.vertices.empty() || mesh.indices.empty()) {
             std::cout << std::format("[ ModelLoader ] ERROR\nObj produced empty mesh data: {}\n", filepath.string());
             abort();
+        }
+
+        if (shouldGenerateNormals) {
+            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                const uint32_t i0 = mesh.indices[i + 0];
+                const uint32_t i1 = mesh.indices[i + 1];
+                const uint32_t i2 = mesh.indices[i + 2];
+
+                const glm::vec3& p0 = mesh.vertices[i0].position;
+                const glm::vec3& p1 = mesh.vertices[i1].position;
+                const glm::vec3& p2 = mesh.vertices[i2].position;
+
+                const glm::vec3 edge1 = p1 - p0;
+                const glm::vec3 edge2 = p2 - p0;
+                const glm::vec3 faceNormal = glm::cross(edge1, edge2);
+
+                if (glm::length(faceNormal) == 0.0f)
+                    continue;
+
+                mesh.vertices[i0].normal += faceNormal;
+                mesh.vertices[i1].normal += faceNormal;
+                mesh.vertices[i2].normal += faceNormal;
+            }
+
+            for (auto& vertex : mesh.vertices) {
+                if (glm::length(vertex.normal) == 0.0f)
+                    vertex.normal = { 0.0f, 1.0f, 0.0f };
+                else
+                    vertex.normal = glm::normalize(vertex.normal);
+            }
+
+            std::cout << std::format(
+                "[ ModelLoader ] WARNING\nObj has no normals. Generated smooth normals: {}\n",
+                filepath.string());
         }
 
         const auto& warning = reader.Warning();

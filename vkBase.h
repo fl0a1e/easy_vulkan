@@ -1151,7 +1151,7 @@ namespace vulkan {
 				level);
 		}
 		void FreeBuffers(arrayRef<VkCommandBuffer> buffers) const {
-			vkFreeCommandBuffers(graphicsBase::Base().Device(), handle, buffers.Count(), buffers.Pointer());
+			vkFreeCommandBuffers(graphicsBase::Base().Device(), handle, static_cast<uint32_t>(buffers.Count()), buffers.Pointer());
 			memset(buffers.Pointer(), 0, buffers.Count() * sizeof(VkCommandBuffer));
 		}
 		void FreeBuffers(arrayRef<commandBuffer> buffers) const {

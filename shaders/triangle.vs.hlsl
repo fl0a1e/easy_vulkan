@@ -2,11 +2,13 @@ cbuffer CameraData : register(b0)
 {
     float4x4 view;
     float4x4 proj;
+    float3 cameraPosition;
 };
 
 struct ModelData
 {
     float4x4 model;
+    float4 meshInfo;
 };
 
 [[vk::push_constant]]
@@ -24,6 +26,8 @@ struct VSOutput
     float4 Position : SV_Position;
     [[vk::location(0)]] float3 WorldNormal : NORMAL;
     [[vk::location(1)]] float2 UV : TEXCOORD0;
+    [[vk::location(2)]] nointerpolation float HasTexcoord : TEXCOORD1;
+    [[vk::location(3)]] float3 WorldPosition : TEXCOORD2;
 };
 
 VSOutput main(VSInput input)
@@ -37,5 +41,7 @@ VSOutput main(VSInput input)
 
     o.WorldNormal = normalize(mul((float3x3)pushConstants.model, input.Normal));
     o.UV = input.UV;
+    o.HasTexcoord = pushConstants.meshInfo.x;
+    o.WorldPosition = worldPosition.xyz;
     return o;
 }
