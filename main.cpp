@@ -5,16 +5,9 @@
 #include "easyVk.hpp"
 #include "Camera.hpp"
 #include "ImageLoader.hpp"
+#include "ModelLoader.hpp"
 
 using namespace vulkan;
-
-// 一个顶点包含位置、调试用颜色和纹理坐标三部分属性。
-// 颜色保留着，方便后面继续做“顶点色 * 纹理”的混合调试。
-struct Vertex {
-    glm::vec3 position;
-    glm::vec3 color;
-    glm::vec2 uv;
-};
 
 // MVP 是最基础的 3D 变换链：
 // model 把模型从局部空间放到世界里，
@@ -63,50 +56,9 @@ VkDescriptorSet descriptorSet_cube = VK_NULL_HANDLE;
 
 camera camera_main; // 主相机，只负责生成 view/proj
 
-// 立方体每个面都需要自己独立的一套 UV，
-// 所以这里不再复用 8 个角点，而是拆成 24 个顶点。
-const std::array<Vertex, 24> cubeVertices = {
-    Vertex{ {-0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
-    Vertex{ { 0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
-    Vertex{ { 0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
-    Vertex{ {-0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} },
+uint32_t meshIndexCount = 0;
 
-    Vertex{ {-0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
-    Vertex{ { 0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
-    Vertex{ { 0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
-    Vertex{ {-0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} },
-
-    Vertex{ {-0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
-    Vertex{ {-0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
-    Vertex{ {-0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
-    Vertex{ {-0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} },
-
-    Vertex{ { 0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
-    Vertex{ { 0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
-    Vertex{ { 0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
-    Vertex{ { 0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} },
-
-    Vertex{ {-0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
-    Vertex{ { 0.5f,  0.5f, -0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
-    Vertex{ { 0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
-    Vertex{ {-0.5f,  0.5f,  0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} },
-
-    Vertex{ {-0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 1.f} },
-    Vertex{ {-0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 1.f} },
-    Vertex{ { 0.5f, -0.5f,  0.5f}, {1.f, 1.f, 1.f}, {1.f, 0.f} },
-    Vertex{ { 0.5f, -0.5f, -0.5f}, {1.f, 1.f, 1.f}, {0.f, 0.f} }
-};
-
-const std::array<uint16_t, 36> cubeIndices = {
-    0, 1, 2, 0, 2, 3,
-    4, 6, 5, 4, 7, 6,
-    8, 9, 10, 8, 10, 11,
-    12, 13, 14, 12, 14, 15,
-    16, 17, 18, 16, 18, 19,
-    20, 22, 21, 20, 23, 22
-};
-
-const Light lightData{ {3.0f, 3.0f,3.0f},0, {-1.0f ,-1.0f, -1.0f}, 0,{0.f, 0.f, 1.0f} };
+const Light lightData{ {3.0f, 3.0f,3.0f},0, {-1.0f ,-1.0f, -1.0f}, 0,{0.f, 0.7f, 0.2f} };
 
 // 找合适的内存类型
 // Vulkan 告诉你“这类资源可以绑定哪些类型的内存”，再从物理设备支持的内存类型里选一个满足要求的。
@@ -402,8 +354,8 @@ void CreateLayout() {
     pipelineLayout_cube.Create(pipelineLayoutCreateInfo);
 }
 
-// CreateGeometry()：把立方体数据真正送进 GPU
-void CreateGeometry() {
+// CreateGeometry()：把模型数据真正送进 GPU
+void CreateGeometry(const std::vector<modelLoading::Vertex>& vertices, const std::vector<uint32_t>& indices) {
     auto CreateUploadBuffer = [](buffer& gpuBuffer, deviceMemory& gpuMemory, VkBufferUsageFlags usage, const void* pData, size_t size) {
         // 几何缓冲这边先继续走最容易理解的路径：
         // 创建一个 HOST_VISIBLE | HOST_COHERENT 的缓冲，让 CPU 可以直接写入数据。
@@ -427,14 +379,16 @@ void CreateGeometry() {
         vertexBuffer_cube,
         vertexMemory_cube,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        cubeVertices.data(),
-        sizeof(cubeVertices));
+        vertices.data(),
+        sizeof(modelLoading::Vertex) * vertices.size());
     CreateUploadBuffer(
         indexBuffer_cube,
         indexMemory_cube,
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        cubeIndices.data(),
-        sizeof(cubeIndices));
+        indices.data(),
+        sizeof(uint32_t) * indices.size());
+
+    meshIndexCount = static_cast<uint32_t>(indices.size());
 }
 
 void CreateUniformResources() {
@@ -660,7 +614,9 @@ void UpdateUniformBuffer() {
     const float time = std::chrono::duration<float>(now - startTime).count();
 
     UniformBufferObject ubo{};
-    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(60.0f), glm::vec3(0.4f, 1.0f, 0.2f));
+    glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), time * glm::radians(60.0f), glm::vec3(0.f, 1.0f, 0.f));
+    glm::mat4 scale = glm::scale(glm::mat4(1.0f), glm::vec3(0.05f));
+    ubo.model = rotation * scale;
 
     // 相机模块只负责观察和投影：
     // view 表示“相机从哪里看”，proj 表示“怎么把 3D 压到屏幕上”。
@@ -668,15 +624,11 @@ void UpdateUniformBuffer() {
     ubo.proj = camera_main.Projection(windowSize);
 
     uniformMemory_cube.Write(&ubo, sizeof(ubo));
-
-    // update light struct
-    //Light light_ubo{};
-    //lightMemory.Write(&light_ubo, sizeof(light_ubo));
 }
 
 void CreatePipeline() {
-    // shader 现在从顶点缓冲读取位置、颜色、UV，
-    // PS 再根据 descriptor set 里的纹理资源做采样。
+    // shader 现在从顶点缓冲读取位置、法线、UV，
+    // PS 再根据 descriptor set 里的纹理和光照资源做采样与计算。
     static shaderModule vs("shaders/triangle.vs.spv");
     static shaderModule ps("shaders/triangle.ps.spv");
     static VkPipelineShaderStageCreateInfo shaderStageCreateInfos_cube[2] = {
@@ -691,33 +643,33 @@ void CreatePipeline() {
         pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_FILL;
         pipelineCiPack.rasterizationStateCi.cullMode = VK_CULL_MODE_BACK_BIT;
-        pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         pipelineCiPack.rasterizationStateCi.lineWidth = 1.0f;
 
         // binding 0 是整条顶点流；
-        // location 0/1/2 分别对应 position / color / uv。
+        // location 0/1/2 分别对应 position / normal / uv。
         pipelineCiPack.vertexInputBindings.push_back({
             .binding = 0,
-            .stride = sizeof(Vertex),
+            .stride = sizeof(modelLoading::Vertex),
             .inputRate = VK_VERTEX_INPUT_RATE_VERTEX
         });
         pipelineCiPack.vertexInputAttributes.push_back({
             .location = 0,
             .binding = 0,
             .format = VK_FORMAT_R32G32B32_SFLOAT,
-            .offset = offsetof(Vertex, position)
+            .offset = offsetof(modelLoading::Vertex, position)
         });
         pipelineCiPack.vertexInputAttributes.push_back({
             .location = 1,
             .binding = 0,
             .format = VK_FORMAT_R32G32B32_SFLOAT,
-            .offset = offsetof(Vertex, color)
+            .offset = offsetof(modelLoading::Vertex, normal)
         });
         pipelineCiPack.vertexInputAttributes.push_back({
             .location = 2,
             .binding = 0,
             .format = VK_FORMAT_R32G32_SFLOAT,
-            .offset = offsetof(Vertex, uv)
+            .offset = offsetof(modelLoading::Vertex, uv)
         });
 
         pipelineCiPack.viewports.emplace_back(0.f, 0.f, float(windowSize.width), float(windowSize.height), 0.f, 1.f);
@@ -775,7 +727,9 @@ int main() {
     const auto& framebuffers = rpwf.framebuffers;
     CreateDescriptorSetLayout();
     CreateLayout();
-    CreateGeometry();
+    const auto meshPath = FindAssetPath("assets/tree.obj");
+    const auto mesh = modelLoading::LoadObj(meshPath);
+    CreateGeometry(mesh.vertices, mesh.indices);
     CreateUniformResources();
     CreateLightResources();
     CreateTextureResources();
@@ -838,8 +792,8 @@ int main() {
         VkBuffer vertexBuffers[] = { vertexBuffer_cube };
         VkDeviceSize offsets[] = { 0 };
         vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(commandBuffer, indexBuffer_cube, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(cubeIndices.size()), 1, 0, 0, 0);
+        vkCmdBindIndexBuffer(commandBuffer, indexBuffer_cube, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(commandBuffer, meshIndexCount, 1, 0, 0, 0);
 
         renderPass.CmdEnd(commandBuffer);
         commandBuffer.End();
@@ -856,6 +810,8 @@ int main() {
     TerminateWindow();
     return 0;
 }
+
+
 
 
 

@@ -21,6 +21,9 @@
     <ClCompile Include="ImageLoader.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="ModelLoader.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="vkStart.h">
@@ -42,6 +45,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="ImageLoader.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="ModelLoader.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

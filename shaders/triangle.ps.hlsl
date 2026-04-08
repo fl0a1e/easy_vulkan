@@ -1,6 +1,6 @@
-﻿struct PSInput
+struct PSInput
 {
-    [[vk::location(0)]] float3 Color : COLOR;
+    [[vk::location(0)]] float3 WorldNormal : NORMAL;
     [[vk::location(1)]] float2 UV : TEXCOORD0;
 };
 
@@ -21,5 +21,9 @@ cbuffer LightData
 float4 main(PSInput input) : SV_TARGET0
 {
     float4 baseColor = baseColorTexture.Sample(baseColorSampler, input.UV);
-    return float4(baseColor.rgb * input.Color * light_color.rgb, baseColor.a);
+    float3 normal = normalize(input.WorldNormal);
+    float3 lightDirection = normalize(-light_dir);
+    float diffuse = max(dot(normal, lightDirection), 0.0f);
+    float3 litColor = baseColor.rgb * light_color.rgb * diffuse;
+    return float4(litColor, baseColor.a);
 }

@@ -1,4 +1,4 @@
-﻿cbuffer CameraData : register(b0)
+cbuffer CameraData : register(b0)
 {
     float4x4 model;
     float4x4 view;
@@ -8,14 +8,14 @@
 struct VSInput
 {
     [[vk::location(0)]] float3 Position : POSITION;
-    [[vk::location(1)]] float3 Color : COLOR;
+    [[vk::location(1)]] float3 Normal : NORMAL;
     [[vk::location(2)]] float2 UV : TEXCOORD0;
 };
 
 struct VSOutput
 {
     float4 Position : SV_Position;
-    [[vk::location(0)]] float3 Color : COLOR;
+    [[vk::location(0)]] float3 WorldNormal : NORMAL;
     [[vk::location(1)]] float2 UV : TEXCOORD0;
 };
 
@@ -30,8 +30,8 @@ VSOutput main(VSInput input)
     float4 viewPosition = mul(view, worldPosition);
     o.Position = mul(proj, viewPosition);
 
-    // 颜色和 UV 都作为普通 varying 输出到下一个阶段，由光栅化阶段自动插值。
-    o.Color = input.Color;
+    // 法线需要随模型一起变换，供像素着色器做最基础的漫反射计算。
+    o.WorldNormal = normalize(mul((float3x3)model, input.Normal));
     o.UV = input.UV;
     return o;
 }
