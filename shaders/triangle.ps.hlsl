@@ -9,8 +9,17 @@
 [[vk::binding(1, 0)]] Texture2D baseColorTexture;
 [[vk::binding(2, 0)]] SamplerState baseColorSampler;
 
+// light
+[[vk::binding(3, 0)]]
+cbuffer LightData
+{
+    float3 light_position;
+    float3 light_dir;
+    float3 light_color;
+}
+
 float4 main(PSInput input) : SV_TARGET0
 {
     float4 baseColor = baseColorTexture.Sample(baseColorSampler, input.UV);
-    return float4(baseColor.rgb * input.Color, baseColor.a);
+    return float4(baseColor.rgb * input.Color * light_color.rgb, baseColor.a);
 }

@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Core source files live at the repository root. `main.cpp` contains the sample render loop, `GlfwGeneral.hpp` handles window and surface setup, `vkBase.h` and `vkBase+.h` wrap Vulkan objects and pipeline state, and `easyVk.hpp` provides higher-level helpers such as the screen render pass/framebuffer setup. Shader sources and compiled SPIR-V files live in [`shaders/`](C:\Users\13240\Desktop\AIgraphics\easy_vulkan\shaders). Ignore `_3rd_party/`, `bin/`, `easy_vulkan_x64/`, and `.vs/` when making feature changes; they are third-party, generated, or IDE output.
+Core source files live at the repository root. `main.cpp` contains the sample render loop, `GlfwGeneral.hpp` handles window and surface setup, `vkBase.h` and `vkBase+.h` wrap Vulkan objects and pipeline state, and `easyVk.hpp` provides higher-level helpers such as the screen render pass/framebuffer setup. Shader sources and compiled SPIR-V files live in [`shaders/`](C:\Users\13240\Desktop\AIgraphics\easy_vulkan\shaders). Runtime assets such as texture images and model files live in [`assets/`](C:\Users\13240\Desktop\AIgraphics\easy_vulkan\assets). Ignore `_3rd_party/`, `bin/`, `easy_vulkan_x64/`, and `.vs/` when making feature changes; they are third-party, generated, or IDE output.
 
 ## Build, Test, and Development Commands
 Use Visual Studio 2022 or newer with the Vulkan SDK installed.

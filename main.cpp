@@ -26,6 +26,17 @@ struct UniformBufferObject {
     glm::mat4 proj;
 };
 
+// 光照信息
+// 平行光
+struct Light {
+    glm::vec3 position;
+    float _pad1;
+    glm::vec3 dir;
+    float _pad2;
+    glm::vec3 color;
+    float _pad3;
+};
+
 
 pipelineLayout pipelineLayout_cube; // 立方体管线布局
 pipeline pipeline_cube;             // 立方体管线
@@ -42,6 +53,9 @@ VkImageView textureImageView_cube = VK_NULL_HANDLE;
 VkSampler textureSampler_cube = VK_NULL_HANDLE;
 deviceMemory textureMemory_cube;    // 纹理图像绑定的显存
 uint32_t textureMipLevels_cube = 1; // 纹理实际创建的 mip 层数
+
+deviceMemory lightMemory; // 光照信息绑定的显存
+buffer lightBuffer; // 光照信息的uniform buffer
 
 VkDescriptorSetLayout descriptorSetLayout_cube = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_cube = VK_NULL_HANDLE;
@@ -91,6 +105,8 @@ const std::array<uint16_t, 36> cubeIndices = {
     16, 17, 18, 16, 18, 19,
     20, 22, 21, 20, 23, 22
 };
+
+const Light lightData{ {3.0f, 3.0f,3.0f},0, {-1.0f ,-1.0f, -1.0f}, 0,{0.f, 0.f, 1.0f} };
 
 // 找合适的内存类型
 // Vulkan 告诉你“这类资源可以绑定哪些类型的内存”，再从物理设备支持的内存类型里选一个满足要求的。
@@ -339,6 +355,7 @@ void CreateDescriptorSetLayout() {
     // set 0 / binding 0：给 VS 的 uniform buffer
     // set 0 / binding 1：给 PS 的 sampled image
     // set 0 / binding 2：给 PS 的 sampler
+    // set 0 / binding 3: 给 PS 的 光照数据
     VkDescriptorSetLayoutBinding uboBinding{};
     uboBinding.binding = 0;
     uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -357,7 +374,13 @@ void CreateDescriptorSetLayout() {
     samplerBinding.descriptorCount = 1;
     samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    const std::array bindings = { uboBinding, textureBinding, samplerBinding };
+    VkDescriptorSetLayoutBinding lightBinding{};
+    lightBinding.binding = 3;
+    lightBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    lightBinding.descriptorCount = 1;
+    lightBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    const std::array bindings = { uboBinding, textureBinding, samplerBinding, lightBinding };
 
     VkDescriptorSetLayoutCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -428,6 +451,21 @@ void CreateUniformResources() {
     };
     uniformMemory_cube.Create(allocateInfo);
     uniformBuffer_cube.BindMemory(uniformMemory_cube);
+}
+
+void CreateLightResources() {
+    lightBuffer.Create(sizeof(Light), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+
+    const auto requirements = lightBuffer.MemoryRequirements();
+    VkMemoryAllocateInfo allocateInfo = {
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = FindMemoryTypeIndex(
+            requirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+    };
+    lightMemory.Create(allocateInfo);
+    lightBuffer.BindMemory(lightMemory);
+    lightMemory.Write(&lightData, sizeof(lightData));
 }
 
 void CreateTextureResources() {
@@ -539,7 +577,7 @@ void CreateTextureResources() {
 }
 void CreateDescriptorSet() {
     const std::array poolSizes = {
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 },
         VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1 },
         VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, 1 }
     };
@@ -578,8 +616,13 @@ void CreateDescriptorSet() {
     VkDescriptorImageInfo samplerInfo{};
     samplerInfo.sampler = textureSampler_cube;
 
+    VkDescriptorBufferInfo lightInfo{};
+    lightInfo.buffer = lightBuffer;
+    lightInfo.offset = 0;
+    lightInfo.range = sizeof(Light);
+
     // descriptor set 里记录的不是数据本体，而是“shader 应该去哪里读这些资源”的描述信息。
-    std::array<VkWriteDescriptorSet, 3> writes{};
+    std::array<VkWriteDescriptorSet, 4> writes{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = descriptorSet_cube;
     writes[0].dstBinding = 0;
@@ -601,6 +644,13 @@ void CreateDescriptorSet() {
     writes[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     writes[2].pImageInfo = &samplerInfo;
 
+    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[3].dstSet = descriptorSet_cube;
+    writes[3].dstBinding = 3;
+    writes[3].descriptorCount = 1;
+    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[3].pBufferInfo = &lightInfo;
+
     vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
@@ -618,6 +668,10 @@ void UpdateUniformBuffer() {
     ubo.proj = camera_main.Projection(windowSize);
 
     uniformMemory_cube.Write(&ubo, sizeof(ubo));
+
+    // update light struct
+    //Light light_ubo{};
+    //lightMemory.Write(&light_ubo, sizeof(light_ubo));
 }
 
 void CreatePipeline() {
@@ -723,6 +777,7 @@ int main() {
     CreateLayout();
     CreateGeometry();
     CreateUniformResources();
+    CreateLightResources();
     CreateTextureResources();
     CreateDescriptorSet();
     CreatePipeline();
@@ -801,11 +856,6 @@ int main() {
     TerminateWindow();
     return 0;
 }
-
-
-
-
-
 
 
 
