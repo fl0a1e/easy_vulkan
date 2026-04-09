@@ -4,10 +4,13 @@ struct PSInput
     [[vk::location(1)]] float2 UV : TEXCOORD0;
     [[vk::location(2)]] nointerpolation float HasTexcoord : TEXCOORD1;
     [[vk::location(3)]] float3 WorldPosition : TEXCOORD2;
+    [[vk::location(4)]] float4 ShadowPosition : TEXCOORD3;
 };
 
 [[vk::binding(1, 0)]] Texture2D baseColorTexture;
 [[vk::binding(2, 0)]] SamplerState baseColorSampler;
+[[vk::binding(4, 0)]] Texture2D<float> shadowMapTexture;
+[[vk::binding(5, 0)]] SamplerState shadowMapSampler;
 
 [[vk::binding(3, 0)]]
 cbuffer LightData
@@ -24,6 +27,24 @@ cbuffer CameraData : register(b0)
     float3 cameraPosition;
 };
 
+float ComputeShadowFactor(float4 shadowPosition)
+{
+    if (shadowPosition.w <= 0.0f)
+        return 1.0f;
+
+    float3 projected = shadowPosition.xyz / shadowPosition.w;
+    if (projected.x < -1.0f || projected.x > 1.0f ||
+        projected.y < -1.0f || projected.y > 1.0f ||
+        projected.z <= 0.0f || projected.z > 1.0f)
+        return 1.0f;
+
+    float2 shadowUv = projected.xy * 0.5f + 0.5f;
+    float currentDepth = projected.z;
+    float shadowDepth = shadowMapTexture.Sample(shadowMapSampler, shadowUv).r;
+    float bias = 0.0025f;
+    return currentDepth - bias <= shadowDepth ? 1.0f : 0.28f;
+}
+
 float4 main(PSInput input) : SV_TARGET0
 {
     float3 baseColor = input.HasTexcoord > 0.5f
@@ -38,9 +59,10 @@ float4 main(PSInput input) : SV_TARGET0
     float ambient = 0.12f;
     float diffuse = max(dot(normal, lightDirection), 0.0f);
     float specular = pow(max(dot(normal, halfVector), 0.0f), 32.0f);
+    float shadowFactor = ComputeShadowFactor(input.ShadowPosition);
 
-    float3 diffuseColor = baseColor * light_color.rgb * diffuse;
+    float3 diffuseColor = baseColor * light_color.rgb * diffuse * shadowFactor;
     float3 ambientColor = baseColor * ambient;
-    float3 specularColor = light_color.rgb * specular * 0.35f;
+    float3 specularColor = light_color.rgb * specular * 0.35f * shadowFactor;
     return float4(ambientColor + diffuseColor + specularColor, 1.0f);
 }

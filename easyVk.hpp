@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #include "VKBase+.h"
 
@@ -54,6 +54,18 @@ namespace easyVulkan {
         return FindSupportedFormat(candidates, VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
     }
 
+    inline VkFormat FindShadowDepthFormat() {
+        static constexpr VkFormat candidates[] = {
+            VK_FORMAT_D32_SFLOAT,
+            VK_FORMAT_D32_SFLOAT_S8_UINT,
+            VK_FORMAT_D24_UNORM_S8_UINT
+        };
+        return FindSupportedFormat(
+            candidates,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+    }
+
     struct renderPassWithFramebuffers {
         renderPass renderPass;
         std::vector<framebuffer> framebuffers;
@@ -63,17 +75,28 @@ namespace easyVulkan {
         VkImageView depthImageView = VK_NULL_HANDLE;
     };
 
-    // ´´½¨Ò»¸öÖ±½Ó»­µ½½»»»Á´Í¼ÏñµÄ×î¼ò render pass£º
-    // ÑÕÉ«¸½¼şĞ´µ½ swapchain£¬Éî¶È¸½¼şµ¥¶À´æµ½Ò»ÕÅ depth image¡£
+    struct shadowRenderPassResources {
+        renderPass shadowPass;
+        framebuffer shadowFramebuffer;
+        VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+        VkExtent2D extent = {};
+        VkImage depthImage = VK_NULL_HANDLE;
+        VkDeviceMemory depthMemory = VK_NULL_HANDLE;
+        VkImageView depthImageView = VK_NULL_HANDLE;
+        VkSampler shadowSampler = VK_NULL_HANDLE;
+    };
+
+    // åˆ›å»ºä¸€ä¸ªç›´æ¥ç”»åˆ°äº¤æ¢é“¾å›¾åƒçš„æœ€ç®€ render passï¼š
+    // é¢œè‰²é™„ä»¶å†™åˆ° swapchainï¼Œæ·±åº¦é™„ä»¶å•ç‹¬å­˜åˆ°ä¸€å¼  depth imageã€‚
     const auto& CreateRpwf_Screen() {
         static renderPassWithFramebuffers rpwf;
 
         rpwf.depthFormat = FindDepthFormat();
 
-        // ===== ´´½¨ render pass =========
-        // ¸½¼ş 0£º½»»»Á´ÑÕÉ«Í¼Ïñ¡£
-        // loadOp = CLEAR ±íÊ¾Ã¿Ö¡¿ªÊ¼ÏÈÇåÆÁ
-        // finalLayout = PRESENT_SRC_KHR ±íÊ¾äÖÈ¾½áÊøºóÒªÓÃÓÚÏÔÊ¾
+        // ===== åˆ›å»º render pass =========
+        // é™„ä»¶ 0ï¼šäº¤æ¢é“¾é¢œè‰²å›¾åƒã€‚
+        // loadOp = CLEAR è¡¨ç¤ºæ¯å¸§å¼€å§‹å…ˆæ¸…å±
+        // finalLayout = PRESENT_SRC_KHR è¡¨ç¤ºæ¸²æŸ“ç»“æŸåè¦ç”¨äºæ˜¾ç¤º
         VkAttachmentDescription colorAttachmentDescription = {
             .format = graphicsBase::Base().SwapchainCreateInfo().imageFormat,
             .samples = VK_SAMPLE_COUNT_1_BIT,
@@ -85,8 +108,8 @@ namespace easyVulkan {
             .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
         };
 
-        // ¸½¼ş 1£ºÉî¶ÈÍ¼Ïñ¡£
-        // Ã¿Ö¡¿ªÊ¼Çå³É 1.0£¬±íÊ¾¡°×îÔ¶¡±£»äÖÈ¾½áÊøºó±£³ÖÉî¶È¸½¼ş²¼¾Ö£¬¹©ÏÂ´Î¼ÌĞø×÷Îª depth attachment Ê¹ÓÃ¡£
+        // é™„ä»¶ 1ï¼šæ·±åº¦å›¾åƒã€‚
+        // æ¯å¸§å¼€å§‹æ¸…æˆ 1.0ï¼Œè¡¨ç¤ºâ€œæœ€è¿œâ€ï¼›æ¸²æŸ“ç»“æŸåä¿æŒæ·±åº¦é™„ä»¶å¸ƒå±€ï¼Œä¾›ä¸‹æ¬¡ç»§ç»­ä½œä¸º depth attachment ä½¿ç”¨ã€‚
         VkAttachmentDescription depthAttachmentDescription = {
             .format = rpwf.depthFormat,
             .samples = VK_SAMPLE_COUNT_1_BIT,
@@ -98,7 +121,7 @@ namespace easyVulkan {
             .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
         };
 
-        // Á½¸öattachment£¬Á½¸ösubpass
+        // ä¸¤ä¸ªattachmentï¼Œä¸¤ä¸ªsubpass
         VkAttachmentReference colorAttachmentReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
         VkAttachmentReference depthAttachmentReference = { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
         VkSubpassDescription subpassDescription = {
@@ -108,7 +131,7 @@ namespace easyVulkan {
             .pDepthStencilAttachment = &depthAttachmentReference
         };
 
-        // ÕâÀïÍ¬Ê±°ÑÑÕÉ«Êä³öºÍÉî¶È²âÊÔ½×¶ÎµÄÒÀÀµ¶¼ÃèÊöÇå³ş¡£
+        // è¿™é‡ŒåŒæ—¶æŠŠé¢œè‰²è¾“å‡ºå’Œæ·±åº¦æµ‹è¯•é˜¶æ®µçš„ä¾èµ–éƒ½æè¿°æ¸…æ¥šã€‚
         VkSubpassDependency subpassDependency = {
             .srcSubpass = VK_SUBPASS_EXTERNAL,
             .dstSubpass = 0,
@@ -133,7 +156,7 @@ namespace easyVulkan {
         auto CreateDepthResources = [] {
             auto device = graphicsBase::Base().Device();
 
-            // depth image ÊÇÎÒÃÇ×Ô¼º´´½¨µÄÀëÆÁÍ¼Ïñ£¬´óĞ¡Óë½»»»Á´Ò»ÖÂ¡£
+            // depth image æ˜¯æˆ‘ä»¬è‡ªå·±åˆ›å»ºçš„ç¦»å±å›¾åƒï¼Œå¤§å°ä¸äº¤æ¢é“¾ä¸€è‡´ã€‚
             VkImageCreateInfo imageCreateInfo = {
                 .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
                 .imageType = VK_IMAGE_TYPE_2D,
@@ -218,18 +241,171 @@ namespace easyVulkan {
         };
 
         auto DestroyFramebuffers = [] {
-            rpwf.framebuffers.clear(); //Çå¿ÕvectorÖĞµÄÔªËØÊ±»áÖğÒ»Ö´ĞĞÎö¹¹º¯Êı
+            rpwf.framebuffers.clear(); //æ¸…ç©ºvectorä¸­çš„å…ƒç´ æ—¶ä¼šé€ä¸€æ‰§è¡Œææ„å‡½æ•°
         };
 
         CreateDepthResources();
         CreateFramebuffers();
 
-        // Õâ¸öº¯Êı¿ÉÄÜ±»¶à´Î·ÃÎÊ£¬µ«»Øµ÷Ö»Ó¦¸Ã×¢²áÒ»´Î¡£
+        // è¿™ä¸ªå‡½æ•°å¯èƒ½è¢«å¤šæ¬¡è®¿é—®ï¼Œä½†å›è°ƒåªåº”è¯¥æ³¨å†Œä¸€æ¬¡ã€‚
         ExecuteOnce(rpwf);
         graphicsBase::Base().AddCallback_DestroySwapchain(DestroyFramebuffers);
         graphicsBase::Base().AddCallback_DestroySwapchain(DestroyDepthResources);
         graphicsBase::Base().AddCallback_CreateSwapchain(CreateDepthResources);
         graphicsBase::Base().AddCallback_CreateSwapchain(CreateFramebuffers);
+
+        return rpwf;
+    }
+
+    const auto& CreateRpwf_Shadow() {
+        static shadowRenderPassResources rpwf;
+
+        rpwf.depthFormat = FindShadowDepthFormat();
+        rpwf.extent = { 2048, 2048 };
+
+        VkAttachmentDescription depthAttachmentDescription = {
+            .format = rpwf.depthFormat,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        };
+
+        VkAttachmentReference depthAttachmentReference = { 0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+        VkSubpassDescription subpassDescription = {
+            .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+            .pDepthStencilAttachment = &depthAttachmentReference
+        };
+
+        VkSubpassDependency subpassDependency = {
+            .srcSubpass = VK_SUBPASS_EXTERNAL,
+            .dstSubpass = 0,
+            .srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT
+        };
+
+        VkRenderPassCreateInfo renderPassCreateInfo = {
+            .attachmentCount = 1,
+            .pAttachments = &depthAttachmentDescription,
+            .subpassCount = 1,
+            .pSubpasses = &subpassDescription,
+            .dependencyCount = 1,
+            .pDependencies = &subpassDependency
+        };
+        rpwf.shadowPass.Create(renderPassCreateInfo);
+
+        auto CreateShadowResources = [] {
+            auto device = graphicsBase::Base().Device();
+
+            VkImageCreateInfo imageCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = rpwf.depthFormat,
+                .extent = { rpwf.extent.width, rpwf.extent.height, 1 },
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+            };
+            if (VkResult result = vkCreateImage(device, &imageCreateInfo, nullptr, &rpwf.depthImage)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create shadow image!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+
+            VkMemoryRequirements requirements{};
+            vkGetImageMemoryRequirements(device, rpwf.depthImage, &requirements);
+            VkMemoryAllocateInfo allocateInfo = {
+                .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                .allocationSize = requirements.size,
+                .memoryTypeIndex = FindMemoryTypeIndex(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+            };
+            if (VkResult result = vkAllocateMemory(device, &allocateInfo, nullptr, &rpwf.depthMemory)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to allocate shadow memory!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+            vkBindImageMemory(device, rpwf.depthImage, rpwf.depthMemory, 0);
+
+            VkImageViewCreateInfo imageViewCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = rpwf.depthImage,
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = rpwf.depthFormat,
+                .subresourceRange = {
+                    .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1
+                }
+            };
+            if (VkResult result = vkCreateImageView(device, &imageViewCreateInfo, nullptr, &rpwf.depthImageView)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create shadow image view!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+
+            VkFramebufferCreateInfo framebufferCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                .renderPass = rpwf.shadowPass,
+                .attachmentCount = 1,
+                .pAttachments = &rpwf.depthImageView,
+                .width = rpwf.extent.width,
+                .height = rpwf.extent.height,
+                .layers = 1
+            };
+            rpwf.shadowFramebuffer.Create(framebufferCreateInfo);
+
+            VkSamplerCreateInfo samplerCreateInfo{};
+            samplerCreateInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerCreateInfo.magFilter = VK_FILTER_NEAREST;
+            samplerCreateInfo.minFilter = VK_FILTER_NEAREST;
+            samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            samplerCreateInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+            samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+            samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+            samplerCreateInfo.mipLodBias = 0.0f;
+            samplerCreateInfo.anisotropyEnable = VK_FALSE;
+            samplerCreateInfo.compareEnable = VK_FALSE;
+            samplerCreateInfo.minLod = 0.0f;
+            samplerCreateInfo.maxLod = 0.0f;
+            samplerCreateInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+            samplerCreateInfo.unnormalizedCoordinates = VK_FALSE;
+            if (VkResult result = vkCreateSampler(device, &samplerCreateInfo, nullptr, &rpwf.shadowSampler)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create shadow sampler!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+        };
+
+        auto DestroyShadowResources = [] {
+            auto device = graphicsBase::Base().Device();
+            rpwf.shadowFramebuffer.~framebuffer();
+            if (rpwf.shadowSampler)
+                vkDestroySampler(device, rpwf.shadowSampler, nullptr);
+            if (rpwf.depthImageView)
+                vkDestroyImageView(device, rpwf.depthImageView, nullptr);
+            if (rpwf.depthImage)
+                vkDestroyImage(device, rpwf.depthImage, nullptr);
+            if (rpwf.depthMemory)
+                vkFreeMemory(device, rpwf.depthMemory, nullptr);
+            rpwf.shadowSampler = VK_NULL_HANDLE;
+            rpwf.depthImageView = VK_NULL_HANDLE;
+            rpwf.depthImage = VK_NULL_HANDLE;
+            rpwf.depthMemory = VK_NULL_HANDLE;
+            rpwf.shadowPass.~renderPass();
+        };
+
+        CreateShadowResources();
+
+        ExecuteOnce(rpwf);
+        graphicsBase::Base().AddCallback_DestroyDevice(DestroyShadowResources);
 
         return rpwf;
     }

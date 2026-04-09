@@ -58,6 +58,9 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <None Include="shaders\shadow.vs.hlsl">
+      <Filter>资源文件</Filter>
+    </None>
     <None Include="shaders\triangle.vs.hlsl">
       <Filter>资源文件</Filter>
     </None>

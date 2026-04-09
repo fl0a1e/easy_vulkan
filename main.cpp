@@ -1,4 +1,4 @@
-#include <algorithm>
+ï»¿#include <algorithm>
 #include <filesystem>
 
 #include "GlfwGeneral.hpp"
@@ -10,10 +10,10 @@
 
 using namespace vulkan;
 
-// MVP ÊÇ×î»ù´¡µÄ 3D ±ä»»Á´£º
-// model °ÑÄ£ĞÍ´Ó¾Ö²¿¿Õ¼ä·Åµ½ÊÀ½çÀï£¬
-// view ±íÊ¾ÉãÏñ»ú¹Û²ì£¬
-// proj ¸ºÔğ°Ñ 3D Í¶Ó°µ½ÆÁÄ»¡£
+// MVP æ˜¯æœ€åŸºç¡€çš„ 3D å˜æ¢é“¾ï¼š
+// model æŠŠæ¨¡å‹ä»å±€éƒ¨ç©ºé—´æ”¾åˆ°ä¸–ç•Œé‡Œï¼Œ
+// view è¡¨ç¤ºæ‘„åƒæœºè§‚å¯Ÿï¼Œ
+// proj è´Ÿè´£æŠŠ 3D æŠ•å½±åˆ°å±å¹•ã€‚
 struct UniformBufferObject {
     glm::mat4 view;
     glm::mat4 proj;
@@ -26,8 +26,12 @@ struct PushConstantObject {
     glm::vec4 meshInfo;
 };
 
-// ¹âÕÕĞÅÏ¢
-// Æ½ĞĞ¹â
+struct ShadowPushConstantObject {
+    glm::mat4 model;
+};
+
+// å…‰ç…§ä¿¡æ¯
+// å¹³è¡Œå…‰
 struct Light {
     glm::vec3 position;
     float _pad1;
@@ -35,6 +39,10 @@ struct Light {
     float _pad2;
     glm::vec3 color;
     float _pad3;
+};
+
+struct ShadowUniformObject {
+    glm::mat4 lightViewProj;
 };
 
 struct MeshResource {
@@ -65,18 +73,25 @@ struct RenderObject {
     glm::vec3 scale;
 };
 
-pipelineLayout pipelineLayout_cube; // Á¢·½Ìå¹ÜÏß²¼¾Ö
-pipeline pipeline_cube;             // Á¢·½Ìå¹ÜÏß
-buffer uniformBuffer_cube;          // uniform »º³å
-buffer lightBuffer;                 // ¹âÕÕ uniform »º³å
+pipelineLayout pipelineLayout_cube;   // ç«‹æ–¹ä½“ç®¡çº¿å¸ƒå±€
+pipelineLayout pipelineLayout_shadow; // shadow pass ç®¡çº¿å¸ƒå±€
+pipeline pipeline_cube;               // ç«‹æ–¹ä½“ç®¡çº¿
+pipeline pipeline_shadow;             // shadow map ç®¡çº¿
+buffer uniformBuffer_cube;            // uniform ç¼“å†²
+buffer lightBuffer;                   // å…‰ç…§ uniform ç¼“å†²
+buffer shadowUniformBuffer;           // å…‰æºè§†è§’çŸ©é˜µ
 
-deviceMemory uniformMemory_cube;    // uniform »º³å°ó¶¨µÄÏÔ´æ
-deviceMemory lightMemory;           // ¹âÕÕ uniform ÏÔ´æ
+deviceMemory uniformMemory_cube;      // uniform ç¼“å†²ç»‘å®šçš„æ˜¾å­˜
+deviceMemory lightMemory;             // å…‰ç…§ uniform æ˜¾å­˜
+deviceMemory shadowUniformMemory;     // shadow uniform æ˜¾å­˜
 
 VkDescriptorSetLayout descriptorSetLayout_cube = VK_NULL_HANDLE;
+VkDescriptorSetLayout descriptorSetLayout_shadow = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_cube = VK_NULL_HANDLE;
+VkDescriptorPool descriptorPool_shadow = VK_NULL_HANDLE;
+VkDescriptorSet descriptorSet_shadow = VK_NULL_HANDLE;
 
-camera camera_main; // Ö÷Ïà»ú£¬Ö»¸ºÔğÉú³É view/proj
+camera camera_main; // ä¸»ç›¸æœºï¼Œåªè´Ÿè´£ç”Ÿæˆ view/proj
 
 std::vector<MeshResource> meshResources;
 std::vector<MaterialResource> materialResources;
@@ -84,8 +99,8 @@ std::vector<RenderObject> renderObjects;
 
 const Light lightData{ {3.0f, 3.0f,3.0f},0, {-1.0f ,-1.0f, -1.0f}, 0,{1.f, 1.f, 1.f} };
 
-// ÕÒºÏÊÊµÄÄÚ´æÀàĞÍ
-// Vulkan ¸æËßÄã¡°ÕâÀà×ÊÔ´¿ÉÒÔ°ó¶¨ÄÄĞ©ÀàĞÍµÄÄÚ´æ¡±£¬ÔÙ´ÓÎïÀíÉè±¸Ö§³ÖµÄÄÚ´æÀàĞÍÀïÑ¡Ò»¸öÂú×ãÒªÇóµÄ¡£
+// æ‰¾åˆé€‚çš„å†…å­˜ç±»å‹
+// Vulkan å‘Šè¯‰ä½ â€œè¿™ç±»èµ„æºå¯ä»¥ç»‘å®šå“ªäº›ç±»å‹çš„å†…å­˜â€ï¼Œå†ä»ç‰©ç†è®¾å¤‡æ”¯æŒçš„å†…å­˜ç±»å‹é‡Œé€‰ä¸€ä¸ªæ»¡è¶³è¦æ±‚çš„ã€‚
 uint32_t FindMemoryTypeIndex(uint32_t memoryTypeBits, VkMemoryPropertyFlags requiredProperties) {
     const auto& memoryProperties = graphicsBase::Base().PhysicalDeviceMemoryProperties();
     for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i) {
@@ -129,10 +144,15 @@ std::filesystem::path FindAssetPath(const std::filesystem::path& relativePath) {
     abort();
 }
 
-// Õâ¸öº¯Êı°ÑäÖÈ¾µ½ÆÁÄ»ËùĞèµÄ render pass + framebuffer ¼¯ºÏ»º´æÆğÀ´¡£
-// ×ö³É¾²Ì¬¾Ö²¿±äÁ¿£¬ÊÇÒòÎªÕâÌ×¶ÔÏóÈ«¾ÖÖ»ĞèÒªÒ»·İ£¬ºóĞøÖ±½Ó¸´ÓÃ¼´¿É¡£
+// è¿™ä¸ªå‡½æ•°æŠŠæ¸²æŸ“åˆ°å±å¹•æ‰€éœ€çš„ render pass + framebuffer é›†åˆç¼“å­˜èµ·æ¥ã€‚
+// åšæˆé™æ€å±€éƒ¨å˜é‡ï¼Œæ˜¯å› ä¸ºè¿™å¥—å¯¹è±¡å…¨å±€åªéœ€è¦ä¸€ä»½ï¼Œåç»­ç›´æ¥å¤ç”¨å³å¯ã€‚
 const auto& RenderPassAndFramebuffers() {
     static const auto& rpwf = easyVulkan::CreateRpwf_Screen();
+    return rpwf;
+}
+
+const auto& ShadowRenderPassResources() {
+    static const auto& rpwf = easyVulkan::CreateRpwf_Shadow();
     return rpwf;
 }
 
@@ -383,11 +403,40 @@ void CmdGenerateMipmaps(VkCommandBuffer commandBuffer, VkImage image, VkFormat i
         0, nullptr,
         1, &barrier);
 }
+
+void CmdPrepareShadowMapForSampling(VkCommandBuffer commandBuffer, VkImage shadowImage) {
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = shadowImage;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier);
+}
+
 void CreateDescriptorSetLayout() {
-    // set 0 / binding 0£º¸ø VS µÄ uniform buffer
-    // set 0 / binding 1£º¸ø PS µÄ sampled image
-    // set 0 / binding 2£º¸ø PS µÄ sampler
-    // set 0 / binding 3: ¸ø PS µÄ ¹âÕÕÊı¾İ
+    // set 0 / binding 0ï¼šç»™ VS çš„ uniform buffer
+    // set 0 / binding 1ï¼šç»™ PS çš„ sampled image
+    // set 0 / binding 2ï¼šç»™ PS çš„ sampler
+    // set 0 / binding 3ï¼šç»™ PS çš„å…‰ç…§æ•°æ®
+    // set 0 / binding 4/5ï¼šshadow map image + sampler
+    // set 0 / binding 6ï¼šç»™ VS çš„ light-space çŸ©é˜µ
     VkDescriptorSetLayoutBinding uboBinding{};
     uboBinding.binding = 0;
     uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -412,7 +461,33 @@ void CreateDescriptorSetLayout() {
     lightBinding.descriptorCount = 1;
     lightBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    const std::array bindings = { uboBinding, textureBinding, samplerBinding, lightBinding };
+    VkDescriptorSetLayoutBinding shadowImageBinding{};
+    shadowImageBinding.binding = 4;
+    shadowImageBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    shadowImageBinding.descriptorCount = 1;
+    shadowImageBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding shadowSamplerBinding{};
+    shadowSamplerBinding.binding = 5;
+    shadowSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    shadowSamplerBinding.descriptorCount = 1;
+    shadowSamplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding shadowMatrixBinding{};
+    shadowMatrixBinding.binding = 6;
+    shadowMatrixBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    shadowMatrixBinding.descriptorCount = 1;
+    shadowMatrixBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    const std::array bindings = {
+        uboBinding,
+        textureBinding,
+        samplerBinding,
+        lightBinding,
+        shadowImageBinding,
+        shadowSamplerBinding,
+        shadowMatrixBinding
+    };
 
     VkDescriptorSetLayoutCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -425,9 +500,27 @@ void CreateDescriptorSetLayout() {
     }
 }
 
+void CreateShadowDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding shadowMatrixBinding{};
+    shadowMatrixBinding.binding = 0;
+    shadowMatrixBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    shadowMatrixBinding.descriptorCount = 1;
+    shadowMatrixBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    createInfo.bindingCount = 1;
+    createInfo.pBindings = &shadowMatrixBinding;
+
+    if (VkResult result = vkCreateDescriptorSetLayout(graphicsBase::Base().Device(), &createInfo, nullptr, &descriptorSetLayout_shadow)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create shadow descriptor set layout!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+}
+
 void CreateLayout() {
-    // pipeline layout ÃèÊöµÄÊÇ¡°Õâ¸ö pipeline ÆÚÍû¿´µ½ÄÄĞ© descriptor set layout¡±¡£
-    // ÕæÕıÕâ´Î draw Ê¹ÓÃÄÄÒ»¸ö descriptor set£¬ÒªÔÚÂ¼ÃüÁîÊ±ÔÙ bind¡£
+    // pipeline layout æè¿°çš„æ˜¯â€œè¿™ä¸ª pipeline æœŸæœ›çœ‹åˆ°å“ªäº› descriptor set layoutâ€ã€‚
+    // çœŸæ­£è¿™æ¬¡ draw ä½¿ç”¨å“ªä¸€ä¸ª descriptor setï¼Œè¦åœ¨å½•å‘½ä»¤æ—¶å† bindã€‚
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantRange.offset = 0;
@@ -441,11 +534,25 @@ void CreateLayout() {
     pipelineLayout_cube.Create(pipelineLayoutCreateInfo);
 }
 
-// CreateGeometry()£º°ÑÄ£ĞÍÊı¾İÕæÕıËÍ½ø GPU
+void CreateShadowLayout() {
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(ShadowPushConstantObject);
+
+    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{};
+    pipelineLayoutCreateInfo.setLayoutCount = 1;
+    pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout_shadow;
+    pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
+    pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
+    pipelineLayout_shadow.Create(pipelineLayoutCreateInfo);
+}
+
+// CreateGeometry()ï¼šæŠŠæ¨¡å‹æ•°æ®çœŸæ­£é€è¿› GPU
 MeshResource CreateMeshResource(const modelLoading::MeshData& meshData) {
     auto CreateUploadBuffer = [](buffer& gpuBuffer, deviceMemory& gpuMemory, VkBufferUsageFlags usage, const void* pData, size_t size) {
-        // ¼¸ºÎ»º³åÕâ±ßÏÈ¼ÌĞø×ß×îÈİÒ×Àí½âµÄÂ·¾¶£º
-        // ´´½¨Ò»¸ö HOST_VISIBLE | HOST_COHERENT µÄ»º³å£¬ÈÃ CPU ¿ÉÒÔÖ±½ÓĞ´ÈëÊı¾İ¡£
+        // å‡ ä½•ç¼“å†²è¿™è¾¹å…ˆç»§ç»­èµ°æœ€å®¹æ˜“ç†è§£çš„è·¯å¾„ï¼š
+        // åˆ›å»ºä¸€ä¸ª HOST_VISIBLE | HOST_COHERENT çš„ç¼“å†²ï¼Œè®© CPU å¯ä»¥ç›´æ¥å†™å…¥æ•°æ®ã€‚
         gpuBuffer.Create(size, usage);
 
         const auto requirements = gpuBuffer.MemoryRequirements();
@@ -456,14 +563,14 @@ MeshResource CreateMeshResource(const modelLoading::MeshData& meshData) {
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
         };
         gpuMemory.Create(allocateInfo);
-        gpuBuffer.BindMemory(gpuMemory); // °ó¶¨ buffer ºÍ memory
+        gpuBuffer.BindMemory(gpuMemory); // ç»‘å®š buffer å’Œ memory
         gpuMemory.Write(pData, size);    // map + memcpy + unmap
     };
 
     MeshResource meshResource{};
 
-    // ¶¥µã»º³å¸ºÔğÌá¹©Ã¿¸ö¶¥µãµÄÊôĞÔ£»
-    // Ë÷Òı»º³å¸ºÔğ¸´ÓÃ¶¥µã£¬±ÜÃâÍ¬Ò»¸ö½ÇµãÔÚÃ¿¸öÈı½ÇĞÎÀïÖØ¸´´æÒ»·İ¡£
+    // é¡¶ç‚¹ç¼“å†²è´Ÿè´£æä¾›æ¯ä¸ªé¡¶ç‚¹çš„å±æ€§ï¼›
+    // ç´¢å¼•ç¼“å†²è´Ÿè´£å¤ç”¨é¡¶ç‚¹ï¼Œé¿å…åŒä¸€ä¸ªè§’ç‚¹åœ¨æ¯ä¸ªä¸‰è§’å½¢é‡Œé‡å¤å­˜ä¸€ä»½ã€‚
     CreateUploadBuffer(
         meshResource.vertexBuffer,
         meshResource.vertexMemory,
@@ -486,8 +593,8 @@ void DestroyMeshResources() {
     meshResources.clear();
 }
 void CreateUniformResources() {
-    // uniform buffer ´æµÄÊÇ¡°Ã¿Ö¡»á±ä»¯£¬µ«µ±Ç° draw ¹²ÓÃ¡±µÄĞ¡¿éÊı¾İ£¬
-    // ÕâÀï¾ÍÊÇ model/view/proj Èı¸ö¾ØÕó¡£
+    // uniform buffer å­˜çš„æ˜¯â€œæ¯å¸§ä¼šå˜åŒ–ï¼Œä½†å½“å‰ draw å…±ç”¨â€çš„å°å—æ•°æ®ï¼Œ
+    // è¿™é‡Œå°±æ˜¯ model/view/proj ä¸‰ä¸ªçŸ©é˜µã€‚
     uniformBuffer_cube.Create(sizeof(UniformBufferObject), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 
     const auto requirements = uniformBuffer_cube.MemoryRequirements();
@@ -514,6 +621,20 @@ void CreateLightResources() {
     lightMemory.Create(allocateInfo);
     lightBuffer.BindMemory(lightMemory);
     lightMemory.Write(&lightData, sizeof(lightData));
+}
+
+void CreateShadowUniformResources() {
+    shadowUniformBuffer.Create(sizeof(ShadowUniformObject), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+
+    const auto requirements = shadowUniformBuffer.MemoryRequirements();
+    VkMemoryAllocateInfo allocateInfo = {
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = FindMemoryTypeIndex(
+            requirements.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+    };
+    shadowUniformMemory.Create(allocateInfo);
+    shadowUniformBuffer.BindMemory(shadowUniformMemory);
 }
 
 MaterialResource CreateMaterialResource(const std::filesystem::path& texturePath) {
@@ -642,9 +763,9 @@ void DestroyMaterialResources() {
 }
 void CreateDescriptorSet() {
     const std::array poolSizes = {
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(materialResources.size() * 2) },
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, static_cast<uint32_t>(materialResources.size()) },
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, static_cast<uint32_t>(materialResources.size()) }
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(materialResources.size() * 3) },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, static_cast<uint32_t>(materialResources.size() * 2) },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, static_cast<uint32_t>(materialResources.size() * 2) }
     };
 
     VkDescriptorPoolCreateInfo poolCreateInfo{};
@@ -672,6 +793,8 @@ void CreateDescriptorSet() {
         abort();
     }
 
+    const auto& shadowResources = ShadowRenderPassResources();
+
     for (size_t i = 0; i < materialResources.size(); ++i) {
         auto& material = materialResources[i];
         material.descriptorSet = descriptorSets[i];
@@ -693,7 +816,19 @@ void CreateDescriptorSet() {
         lightInfo.offset = 0;
         lightInfo.range = sizeof(Light);
 
-        std::array<VkWriteDescriptorSet, 4> writes{};
+        VkDescriptorImageInfo shadowTextureInfo{};
+        shadowTextureInfo.imageView = shadowResources.depthImageView;
+        shadowTextureInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+        VkDescriptorImageInfo shadowSamplerInfo{};
+        shadowSamplerInfo.sampler = shadowResources.shadowSampler;
+
+        VkDescriptorBufferInfo shadowMatrixInfo{};
+        shadowMatrixInfo.buffer = shadowUniformBuffer;
+        shadowMatrixInfo.offset = 0;
+        shadowMatrixInfo.range = sizeof(ShadowUniformObject);
+
+        std::array<VkWriteDescriptorSet, 7> writes{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = material.descriptorSet;
         writes[0].dstBinding = 0;
@@ -722,8 +857,71 @@ void CreateDescriptorSet() {
         writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         writes[3].pBufferInfo = &lightInfo;
 
+        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet = material.descriptorSet;
+        writes[4].dstBinding = 4;
+        writes[4].descriptorCount = 1;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[4].pImageInfo = &shadowTextureInfo;
+
+        writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[5].dstSet = material.descriptorSet;
+        writes[5].dstBinding = 5;
+        writes[5].descriptorCount = 1;
+        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        writes[5].pImageInfo = &shadowSamplerInfo;
+
+        writes[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[6].dstSet = material.descriptorSet;
+        writes[6].dstBinding = 6;
+        writes[6].descriptorCount = 1;
+        writes[6].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[6].pBufferInfo = &shadowMatrixInfo;
+
         vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
+}
+
+void CreateShadowDescriptorSet() {
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo poolCreateInfo{};
+    poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCreateInfo.poolSizeCount = 1;
+    poolCreateInfo.pPoolSizes = &poolSize;
+    poolCreateInfo.maxSets = 1;
+
+    if (VkResult result = vkCreateDescriptorPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &descriptorPool_shadow)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create shadow descriptor pool!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = descriptorPool_shadow;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &descriptorSetLayout_shadow;
+
+    if (VkResult result = vkAllocateDescriptorSets(graphicsBase::Base().Device(), &allocateInfo, &descriptorSet_shadow)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to allocate shadow descriptor set!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    VkDescriptorBufferInfo shadowMatrixInfo{};
+    shadowMatrixInfo.buffer = shadowUniformBuffer;
+    shadowMatrixInfo.offset = 0;
+    shadowMatrixInfo.range = sizeof(ShadowUniformObject);
+
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = descriptorSet_shadow;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.pBufferInfo = &shadowMatrixInfo;
+    vkUpdateDescriptorSets(graphicsBase::Base().Device(), 1, &write, 0, nullptr);
 }
 
 glm::mat4 BuildModelMatrix(const RenderObject& object, float time) {
@@ -736,21 +934,42 @@ glm::mat4 BuildModelMatrix(const RenderObject& object, float time) {
     return translation * rotation * scale;
 }
 
+glm::mat4 BuildLightViewProjection() {
+    constexpr glm::vec3 sceneCenter = { 0.0f, 0.0f, 0.0f };
+    constexpr float sceneExtent = 18.0f;
+    constexpr float lightDistance = 24.0f;
+
+    const glm::vec3 lightDirection = glm::normalize(lightData.dir);
+    const glm::vec3 worldUp = std::abs(glm::dot(lightDirection, glm::vec3(0.0f, 1.0f, 0.0f))) > 0.99f
+        ? glm::vec3(0.0f, 0.0f, 1.0f)
+        : glm::vec3(0.0f, 1.0f, 0.0f);
+    const glm::vec3 lightPosition = sceneCenter - lightDirection * lightDistance;
+
+    glm::mat4 lightView = glm::lookAt(lightPosition, sceneCenter, worldUp);
+    glm::mat4 lightProj = glm::ortho(-sceneExtent, sceneExtent, -sceneExtent, sceneExtent, 1.0f, lightDistance * 2.0f);
+    lightProj[1][1] *= -1.0f;
+    return lightProj * lightView;
+}
+
 void UpdateUniformBuffer() {
     UniformBufferObject ubo{};
 
-    // Ïà»úÄ£¿éÖ»¸ºÔğ¹Û²ìºÍÍ¶Ó°£º
-    // view ±íÊ¾¡°Ïà»ú´ÓÄÄÀï¿´¡±£¬proj ±íÊ¾¡°ÔõÃ´°Ñ 3D Ñ¹µ½ÆÁÄ»ÉÏ¡±¡£
+    // ç›¸æœºæ¨¡å—åªè´Ÿè´£è§‚å¯Ÿå’ŒæŠ•å½±ï¼š
+    // view è¡¨ç¤ºâ€œç›¸æœºä»å“ªé‡Œçœ‹â€ï¼Œproj è¡¨ç¤ºâ€œæ€ä¹ˆæŠŠ 3D å‹åˆ°å±å¹•ä¸Šâ€ã€‚
     ubo.view = camera_main.View();
     ubo.proj = camera_main.Projection(windowSize);
     ubo.cameraPosition = camera_main.position;
 
     uniformMemory_cube.Write(&ubo, sizeof(ubo));
+
+    ShadowUniformObject shadowUbo{};
+    shadowUbo.lightViewProj = BuildLightViewProjection();
+    shadowUniformMemory.Write(&shadowUbo, sizeof(shadowUbo));
 }
 
 void CreatePipeline() {
-    // shader ÏÖÔÚ´Ó¶¥µã»º³å¶ÁÈ¡Î»ÖÃ¡¢·¨Ïß¡¢UV£¬
-    // PS ÔÙ¸ù¾İ descriptor set ÀïµÄÎÆÀíºÍ¹âÕÕ×ÊÔ´×ö²ÉÑùÓë¼ÆËã¡£
+    // shader ç°åœ¨ä»é¡¶ç‚¹ç¼“å†²è¯»å–ä½ç½®ã€æ³•çº¿ã€UVï¼Œ
+    // PS å†æ ¹æ® descriptor set é‡Œçš„çº¹ç†å’Œå…‰ç…§èµ„æºåšé‡‡æ ·ä¸è®¡ç®—ã€‚
     static shaderModule vs("shaders/triangle.vs.spv");
     static shaderModule ps("shaders/triangle.ps.spv");
     static VkPipelineShaderStageCreateInfo shaderStageCreateInfos_cube[2] = {
@@ -768,8 +987,8 @@ void CreatePipeline() {
         pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         pipelineCiPack.rasterizationStateCi.lineWidth = 1.0f;
 
-        // binding 0 ÊÇÕûÌõ¶¥µãÁ÷£»
-        // location 0/1/2 ·Ö±ğ¶ÔÓ¦ position / normal / uv¡£
+        // binding 0 æ˜¯æ•´æ¡é¡¶ç‚¹æµï¼›
+        // location 0/1/2 åˆ†åˆ«å¯¹åº” position / normal / uvã€‚
         pipelineCiPack.vertexInputBindings.push_back({
             .binding = 0,
             .stride = sizeof(modelLoading::Vertex),
@@ -816,14 +1035,73 @@ void CreatePipeline() {
     Create();
 }
 
+void CreateShadowPipeline() {
+    static shaderModule vs("shaders/shadow.vs.spv");
+    static VkPipelineShaderStageCreateInfo shaderStageCreateInfos_shadow[] = {
+        vs.StageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT)
+    };
+
+    graphicsPipelineCreateInfoPack pipelineCiPack;
+    pipelineCiPack.createInfo.layout = pipelineLayout_shadow;
+    pipelineCiPack.createInfo.renderPass = ShadowRenderPassResources().shadowPass;
+    pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_FILL;
+    pipelineCiPack.rasterizationStateCi.cullMode = VK_CULL_MODE_FRONT_BIT;
+    pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    pipelineCiPack.rasterizationStateCi.lineWidth = 1.0f;
+
+    pipelineCiPack.vertexInputBindings.push_back({
+        .binding = 0,
+        .stride = sizeof(modelLoading::Vertex),
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX
+    });
+    pipelineCiPack.vertexInputAttributes.push_back({
+        .location = 0,
+        .binding = 0,
+        .format = VK_FORMAT_R32G32B32_SFLOAT,
+        .offset = offsetof(modelLoading::Vertex, position)
+    });
+    pipelineCiPack.vertexInputAttributes.push_back({
+        .location = 1,
+        .binding = 0,
+        .format = VK_FORMAT_R32G32B32_SFLOAT,
+        .offset = offsetof(modelLoading::Vertex, normal)
+    });
+    pipelineCiPack.vertexInputAttributes.push_back({
+        .location = 2,
+        .binding = 0,
+        .format = VK_FORMAT_R32G32_SFLOAT,
+        .offset = offsetof(modelLoading::Vertex, uv)
+    });
+
+    const auto& shadowResources = ShadowRenderPassResources();
+    pipelineCiPack.viewports.emplace_back(0.f, 0.f, float(shadowResources.extent.width), float(shadowResources.extent.height), 0.f, 1.f);
+    pipelineCiPack.scissors.emplace_back(VkOffset2D{}, shadowResources.extent);
+    pipelineCiPack.multisampleStateCi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    pipelineCiPack.depthStencilStateCi.depthTestEnable = VK_TRUE;
+    pipelineCiPack.depthStencilStateCi.depthWriteEnable = VK_TRUE;
+    pipelineCiPack.depthStencilStateCi.depthCompareOp = VK_COMPARE_OP_LESS;
+    pipelineCiPack.UpdateAllArrays();
+    pipelineCiPack.createInfo.stageCount = 1;
+    pipelineCiPack.createInfo.pStages = shaderStageCreateInfos_shadow;
+    pipeline_shadow.Create(pipelineCiPack);
+}
+
 void DestroyDescriptors() {
     auto device = graphicsBase::Base().Device();
     if (descriptorPool_cube)
         vkDestroyDescriptorPool(device, descriptorPool_cube, nullptr);
+    if (descriptorPool_shadow)
+        vkDestroyDescriptorPool(device, descriptorPool_shadow, nullptr);
     if (descriptorSetLayout_cube)
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout_cube, nullptr);
+    if (descriptorSetLayout_shadow)
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout_shadow, nullptr);
     descriptorPool_cube = VK_NULL_HANDLE;
+    descriptorPool_shadow = VK_NULL_HANDLE;
     descriptorSetLayout_cube = VK_NULL_HANDLE;
+    descriptorSetLayout_shadow = VK_NULL_HANDLE;
+    descriptorSet_shadow = VK_NULL_HANDLE;
 }
 
 int main() {
@@ -831,10 +1109,14 @@ int main() {
         return -1;
 
     const auto& rpwf = RenderPassAndFramebuffers();
+    const auto& shadowRpwf = ShadowRenderPassResources();
     const auto& renderPass = rpwf.renderPass;
     const auto& framebuffers = rpwf.framebuffers;
+    const auto& shadowRenderPass = shadowRpwf.shadowPass;
     CreateDescriptorSetLayout();
+    CreateShadowDescriptorSetLayout();
     CreateLayout();
+    CreateShadowLayout();
     const auto meshPaths = DiscoverMeshPaths();
     meshResources.clear();
     meshResources.reserve(meshPaths.size() + 1);
@@ -855,11 +1137,14 @@ int main() {
     renderObjects = CreateDefaultRenderObjects(modelMeshCount, static_cast<uint32_t>(materialResources.size()), groundMeshIndex);
     CreateUniformResources();
     CreateLightResources();
+    CreateShadowUniformResources();
     CreateDescriptorSet();
+    CreateShadowDescriptorSet();
     CreatePipeline();
+    CreateShadowPipeline();
     camera_main.AttachToWindow(pWindow);
 
-    // ÏÈ´´½¨³É signaled£¬ÕâÑùµÚÒ»Ö¡¿ªÍ·µÄ WaitAndReset ²»»á×èÈû¡£
+    // å…ˆåˆ›å»ºæˆ signaledï¼Œè¿™æ ·ç¬¬ä¸€å¸§å¼€å¤´çš„ WaitAndReset ä¸ä¼šé˜»å¡ã€‚
     fence fence(VK_FENCE_CREATE_SIGNALED_BIT);
     semaphore semaphore_imageIsAvailable;
     semaphore semaphore_renderingIsOver;
@@ -872,6 +1157,7 @@ int main() {
         { .color = { 0.f, 0.f, 0.f, 1.f } },
         { .depthStencil = { 1.0f, 0 } }
     };
+    VkClearValue shadowClearValue = { .depthStencil = { 1.0f, 0 } };
 
     static const auto sceneStartTime = std::chrono::high_resolution_clock::now();
 
@@ -888,9 +1174,9 @@ int main() {
         glfwPollEvents();
         camera_main.UpdateFromInput(pWindow, deltaTime);
 
-        // µ¥Ö¡ in-flight Ğ´·¨£º
-        // Ã¿Ò»Ö¡¿ªÊ¼ÏÈµÈÉÏÒ»Ö¡ GPU Íê³É£¬ÔÙ°Ñ fence ÖØÖÃ»Ø unsignaled£¬
-        // ÕâÑùÕâ´Î vkQueueSubmit ²ÅÄÜºÏ·¨µØÔÙ´ÎÊ¹ÓÃËü¡£
+        // å•å¸§ in-flight å†™æ³•ï¼š
+        // æ¯ä¸€å¸§å¼€å§‹å…ˆç­‰ä¸Šä¸€å¸§ GPU å®Œæˆï¼Œå†æŠŠ fence é‡ç½®å› unsignaledï¼Œ
+        // è¿™æ ·è¿™æ¬¡ vkQueueSubmit æ‰èƒ½åˆæ³•åœ°å†æ¬¡ä½¿ç”¨å®ƒã€‚
         fence.WaitAndReset();
 
         UpdateUniformBuffer();
@@ -898,10 +1184,50 @@ int main() {
         auto i = graphicsBase::Base().CurrentImageIndex();
 
         commandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+        shadowRenderPass.CmdBegin(commandBuffer, shadowRpwf.shadowFramebuffer, { {}, shadowRpwf.extent }, shadowClearValue);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_shadow);
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            pipelineLayout_shadow,
+            0,
+            1,
+            &descriptorSet_shadow,
+            0,
+            nullptr);
+
+        for (const auto& renderObject : renderObjects) {
+            if (renderObject.meshIndex >= meshResources.size()) {
+                std::cout << std::format("[ main ] ERROR\nInvalid mesh index: {}\n", renderObject.meshIndex);
+                abort();
+            }
+
+            const auto& mesh = meshResources[renderObject.meshIndex];
+            VkBuffer vertexBuffers[] = { mesh.vertexBuffer };
+            VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+            ShadowPushConstantObject shadowPushConstant{
+                .model = BuildModelMatrix(renderObject, sceneTime)
+            };
+            vkCmdPushConstants(
+                commandBuffer,
+                pipelineLayout_shadow,
+                VK_SHADER_STAGE_VERTEX_BIT,
+                0,
+                sizeof(shadowPushConstant),
+                &shadowPushConstant);
+            vkCmdDrawIndexed(commandBuffer, mesh.indexCount, 1, 0, 0, 0);
+        }
+
+        shadowRenderPass.CmdEnd(commandBuffer);
+        CmdPrepareShadowMapForSampling(commandBuffer, shadowRpwf.depthImage);
+
         renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, clearValues);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_cube);
 
-        // ¶¥µã»º³åÌá¹©¶¥µãÊôĞÔ£¬Ë÷Òı»º³å¾ö¶¨Èı½ÇĞÎÔõÃ´Æ´½ÓÕâĞ©¶¥µã¡£
+        // é¡¶ç‚¹ç¼“å†²æä¾›é¡¶ç‚¹å±æ€§ï¼Œç´¢å¼•ç¼“å†²å†³å®šä¸‰è§’å½¢æ€ä¹ˆæ‹¼æ¥è¿™äº›é¡¶ç‚¹ã€‚
         for (const auto& renderObject : renderObjects) {
             if (renderObject.meshIndex >= meshResources.size()) {
                 std::cout << std::format("[ main ] ERROR\nInvalid mesh index: {}\n", renderObject.meshIndex);
@@ -953,6 +1279,8 @@ int main() {
     }
 
     vkDeviceWaitIdle(graphicsBase::Base().Device());
+    pipeline_shadow.~pipeline();
+    pipeline_cube.~pipeline();
     DestroyDescriptors();
     DestroyMaterialResources();
     DestroyMeshResources();

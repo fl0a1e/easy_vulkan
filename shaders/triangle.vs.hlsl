@@ -5,6 +5,12 @@ cbuffer CameraData : register(b0)
     float3 cameraPosition;
 };
 
+[[vk::binding(6, 0)]]
+cbuffer ShadowData
+{
+    float4x4 lightViewProj;
+};
+
 struct ModelData
 {
     float4x4 model;
@@ -28,6 +34,7 @@ struct VSOutput
     [[vk::location(1)]] float2 UV : TEXCOORD0;
     [[vk::location(2)]] nointerpolation float HasTexcoord : TEXCOORD1;
     [[vk::location(3)]] float3 WorldPosition : TEXCOORD2;
+    [[vk::location(4)]] float4 ShadowPosition : TEXCOORD3;
 };
 
 VSOutput main(VSInput input)
@@ -43,5 +50,6 @@ VSOutput main(VSInput input)
     o.UV = input.UV;
     o.HasTexcoord = pushConstants.meshInfo.x;
     o.WorldPosition = worldPosition.xyz;
+    o.ShadowPosition = mul(lightViewProj, worldPosition);
     return o;
 }
