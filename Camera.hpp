@@ -11,8 +11,8 @@ public:
     float yaw = glm::radians(-90.0f); // -90 度让初始 front 指向 -Z
     float pitch = glm::radians(-18.0f);
     float fovY = glm::radians(45.0f); // 垂直视野角（Field of View）
-    float nearPlane = 0.1f;
-    float farPlane = 10.0f;
+    float nearPlane = 0.2f;
+    float farPlane = 50.0f;
     float moveSpeed = 2.5f;
     float rotateSensitivity = 0.004f;
     float zoomSensitivity = glm::radians(2.5f);

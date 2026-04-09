@@ -6,6 +6,7 @@
 #include "Camera.hpp"
 #include "ImageLoader.hpp"
 #include "ModelLoader.hpp"
+#include "Terrain.hpp"
 
 using namespace vulkan;
 
@@ -172,8 +173,8 @@ std::vector<std::filesystem::path> DiscoverMaterialPaths() {
     }
     return paths;
 }
-std::vector<RenderObject> CreateDefaultRenderObjects(uint32_t meshCount, uint32_t materialCount) {
-    if (meshCount == 0) {
+std::vector<RenderObject> CreateDefaultRenderObjects(uint32_t modelMeshCount, uint32_t materialCount, uint32_t groundMeshIndex) {
+    if (modelMeshCount == 0) {
         std::cout << "[ main ] ERROR\nCannot create render objects without mesh resources!\n";
         abort();
     }
@@ -183,11 +184,12 @@ std::vector<RenderObject> CreateDefaultRenderObjects(uint32_t meshCount, uint32_
     }
 
     return {
-        { 0 % meshCount, 0 % materialCount, {-3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(22.0f), 0.0f, {0.0005f, 0.0005f, 0.0005f} },
-        { 1 % meshCount, 1 % materialCount, {-1.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(35.0f), 0.8f, {0.5f, 0.5f, 0.5f} },
-        { 2 % meshCount, 0 % materialCount, { 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(20.0f), 0.0f, {3.f, 3.f, 3.f} },
-        { 3 % meshCount, 1 % materialCount, { 1.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(28.0f), 1.6f, {0.125f, 0.125f, 0.125f} },
-        { 4 % meshCount, 0 % materialCount, { 3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(18.0f), 2.4f, {0.05f, 0.05f, 0.05f} }
+        { 0 % modelMeshCount, 0 % materialCount, {-3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(22.0f), 0.0f, {0.0005f, 0.0005f, 0.0005f} },
+        { 1 % modelMeshCount, 1 % materialCount, {-1.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(35.0f), 0.8f, {0.5f, 0.5f, 0.5f} },
+        { 2 % modelMeshCount, 0 % materialCount, { 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(20.0f), 0.0f, {3.f, 3.f, 3.f} },
+        { 3 % modelMeshCount, 1 % materialCount, { 1.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(28.0f), 1.6f, {0.125f, 0.125f, 0.125f} },
+        { 4 % modelMeshCount, 0 % materialCount, { 3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(18.0f), 2.4f, {0.05f, 0.05f, 0.05f} },
+        { groundMeshIndex, 0 % materialCount, { 0.0f, -1.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, 0.0f, 0.0f, {1.0f, 1.0f, 1.0f} }
     };
 }
 void SubmitSingleTimeCommands(const std::function<void(VkCommandBuffer)>& record) {
@@ -835,17 +837,22 @@ int main() {
     CreateLayout();
     const auto meshPaths = DiscoverMeshPaths();
     meshResources.clear();
-    meshResources.reserve(meshPaths.size());
+    meshResources.reserve(meshPaths.size() + 1);
     for (const auto& meshPath : meshPaths) {
         const auto mesh = modelLoading::LoadObj(meshPath);
         meshResources.push_back(CreateMeshResource(mesh));
     }
+
+    const uint32_t modelMeshCount = static_cast<uint32_t>(meshResources.size());
+    const uint32_t groundMeshIndex = modelMeshCount;
+    meshResources.push_back(CreateMeshResource(terrain::CreatePlaneMesh(30.0f)));
+
     const auto materialPaths = DiscoverMaterialPaths();
     materialResources.clear();
     materialResources.reserve(materialPaths.size());
     for (const auto& materialPath : materialPaths)
         materialResources.push_back(CreateMaterialResource(materialPath));
-    renderObjects = CreateDefaultRenderObjects(static_cast<uint32_t>(meshResources.size()), static_cast<uint32_t>(materialResources.size()));
+    renderObjects = CreateDefaultRenderObjects(modelMeshCount, static_cast<uint32_t>(materialResources.size()), groundMeshIndex);
     CreateUniformResources();
     CreateLightResources();
     CreateDescriptorSet();
@@ -952,6 +959,7 @@ int main() {
     TerminateWindow();
     return 0;
 }
+
 
 
 

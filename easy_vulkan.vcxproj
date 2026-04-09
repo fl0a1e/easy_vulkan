@@ -144,11 +144,13 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="ImageLoader.cpp" />
     <ClCompile Include="ModelLoader.cpp" />
+    <ClCompile Include="Terrain.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Camera.hpp" />
     <ClInclude Include="ImageLoader.hpp" />
     <ClInclude Include="ModelLoader.hpp" />
+    <ClInclude Include="Terrain.hpp" />
     <ClInclude Include="easyVk.hpp" />
     <ClInclude Include="GlfwGeneral.hpp" />
     <ClInclude Include="vkBase+.h" />
