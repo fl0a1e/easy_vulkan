@@ -45,8 +45,18 @@ struct MeshResource {
     bool hasTexcoord = true;
 };
 
+struct MaterialResource {
+    VkImage textureImage = VK_NULL_HANDLE;
+    VkImageView textureImageView = VK_NULL_HANDLE;
+    VkSampler textureSampler = VK_NULL_HANDLE;
+    deviceMemory textureMemory;
+    uint32_t textureMipLevels = 1;
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+};
+
 struct RenderObject {
     uint32_t meshIndex;
+    uint32_t materialIndex;
     glm::vec3 position;
     glm::vec3 rotationAxis;
     float rotationSpeed;
@@ -57,25 +67,18 @@ struct RenderObject {
 pipelineLayout pipelineLayout_cube; // 立方体管线布局
 pipeline pipeline_cube;             // 立方体管线
 buffer uniformBuffer_cube;          // uniform 缓冲
+buffer lightBuffer;                 // 光照 uniform 缓冲
 
 deviceMemory uniformMemory_cube;    // uniform 缓冲绑定的显存
-
-VkImage textureImage_cube = VK_NULL_HANDLE;
-VkImageView textureImageView_cube = VK_NULL_HANDLE;
-VkSampler textureSampler_cube = VK_NULL_HANDLE;
-deviceMemory textureMemory_cube;    // 纹理图像绑定的显存
-uint32_t textureMipLevels_cube = 1; // 纹理实际创建的 mip 层数
-
-deviceMemory lightMemory; // 光照信息绑定的显存
-buffer lightBuffer; // 光照信息的uniform buffer
+deviceMemory lightMemory;           // 光照 uniform 显存
 
 VkDescriptorSetLayout descriptorSetLayout_cube = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_cube = VK_NULL_HANDLE;
-VkDescriptorSet descriptorSet_cube = VK_NULL_HANDLE;
 
 camera camera_main; // 主相机，只负责生成 view/proj
 
 std::vector<MeshResource> meshResources;
+std::vector<MaterialResource> materialResources;
 std::vector<RenderObject> renderObjects;
 
 const Light lightData{ {3.0f, 3.0f,3.0f},0, {-1.0f ,-1.0f, -1.0f}, 0,{1.f, 1.f, 1.f} };
@@ -150,18 +153,41 @@ std::vector<std::filesystem::path> DiscoverMeshPaths() {
     return paths;
 }
 
-std::vector<RenderObject> CreateDefaultRenderObjects(uint32_t meshCount) {
+std::vector<std::filesystem::path> DiscoverMaterialPaths() {
+    std::vector<std::filesystem::path> paths;
+    const auto assetsDirectory = FindAssetPath("assets");
+    for (const auto& entry : std::filesystem::directory_iterator(assetsDirectory)) {
+        if (!entry.is_regular_file())
+            continue;
+
+        const auto extension = entry.path().extension().string();
+        if (extension == ".jpg" || extension == ".jpeg" || extension == ".png" || extension == ".bmp" || extension == ".tga")
+            paths.push_back(entry.path());
+    }
+
+    std::ranges::sort(paths);
+    if (paths.empty()) {
+        std::cout << std::format("[ main ] ERROR\nNo texture files were found under: {}\n", assetsDirectory.string());
+        abort();
+    }
+    return paths;
+}
+std::vector<RenderObject> CreateDefaultRenderObjects(uint32_t meshCount, uint32_t materialCount) {
     if (meshCount == 0) {
         std::cout << "[ main ] ERROR\nCannot create render objects without mesh resources!\n";
         abort();
     }
+    if (materialCount == 0) {
+        std::cout << "[ main ] ERROR\nCannot create render objects without material resources!\n";
+        abort();
+    }
 
     return {
-        { 0 % meshCount, {-3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(22.0f), 0.0f, {0.0005f, 0.0005f, 0.0005f} },
-        { 1 % meshCount, {-1.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(35.0f), 0.8f, {0.5f, 0.5f, 0.5f} },
-        { 2 % meshCount, { 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(20.0f), 0.0f, {3.f, 3.f, 3.f} },
-        { 3 % meshCount, { 1.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(28.0f), 1.6f, {0.125f, 0.125f, 0.125f} },
-        { 4 % meshCount, { 3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(18.0f), 2.4f, {0.05f, 0.05f, 0.05f} }
+        { 0 % meshCount, 0 % materialCount, {-3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(22.0f), 0.0f, {0.0005f, 0.0005f, 0.0005f} },
+        { 1 % meshCount, 1 % materialCount, {-1.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(35.0f), 0.8f, {0.5f, 0.5f, 0.5f} },
+        { 2 % meshCount, 0 % materialCount, { 0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(20.0f), 0.0f, {3.f, 3.f, 3.f} },
+        { 3 % meshCount, 1 % materialCount, { 1.5f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(28.0f), 1.6f, {0.125f, 0.125f, 0.125f} },
+        { 4 % meshCount, 0 % materialCount, { 3.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, glm::radians(18.0f), 2.4f, {0.05f, 0.05f, 0.05f} }
     };
 }
 void SubmitSingleTimeCommands(const std::function<void(VkCommandBuffer)>& record) {
@@ -488,11 +514,12 @@ void CreateLightResources() {
     lightMemory.Write(&lightData, sizeof(lightData));
 }
 
-void CreateTextureResources() {
-    const auto texturePath = FindAssetPath("assets/texture.jpg");
+MaterialResource CreateMaterialResource(const std::filesystem::path& texturePath) {
     const auto texture = imageLoading::LoadRgba8(texturePath);
     const VkDeviceSize imageSize = static_cast<VkDeviceSize>(texture.pixels.size());
-    textureMipLevels_cube = ComputeMipLevelCount(texture.width, texture.height);
+
+    MaterialResource material{};
+    material.textureMipLevels = ComputeMipLevelCount(texture.width, texture.height);
 
     buffer stagingBuffer;
     deviceMemory stagingMemory;
@@ -515,7 +542,7 @@ void CreateTextureResources() {
     imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
     imageCreateInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
     imageCreateInfo.extent = { texture.width, texture.height, 1 };
-    imageCreateInfo.mipLevels = textureMipLevels_cube;
+    imageCreateInfo.mipLevels = material.textureMipLevels;
     imageCreateInfo.arrayLayers = 1;
     imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -523,49 +550,47 @@ void CreateTextureResources() {
     imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    if (VkResult result = vkCreateImage(graphicsBase::Base().Device(), &imageCreateInfo, nullptr, &textureImage_cube)) {
+    if (VkResult result = vkCreateImage(graphicsBase::Base().Device(), &imageCreateInfo, nullptr, &material.textureImage)) {
         std::cout << std::format("[ main ] ERROR\nFailed to create texture image!\nError code: {}\n", int32_t(result));
         abort();
     }
 
     VkMemoryRequirements requirements{};
-    vkGetImageMemoryRequirements(graphicsBase::Base().Device(), textureImage_cube, &requirements);
+    vkGetImageMemoryRequirements(graphicsBase::Base().Device(), material.textureImage, &requirements);
     VkMemoryAllocateInfo allocateInfo = {
         .allocationSize = requirements.size,
         .memoryTypeIndex = FindMemoryTypeIndex(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
     };
-    textureMemory_cube.Create(allocateInfo);
-    if (VkResult result = vkBindImageMemory(graphicsBase::Base().Device(), textureImage_cube, textureMemory_cube, 0)) {
+    material.textureMemory.Create(allocateInfo);
+    if (VkResult result = vkBindImageMemory(graphicsBase::Base().Device(), material.textureImage, material.textureMemory, 0)) {
         std::cout << std::format("[ main ] ERROR\nFailed to bind texture image memory!\nError code: {}\n", int32_t(result));
         abort();
     }
 
     SubmitSingleTimeCommands([&](VkCommandBuffer commandBuffer) {
-        // 先把整张 image 的所有 mip 层都切到 transfer 目标布局，
-        // 再把原始像素写到第 0 层，最后在 GPU 上逐层生成更小的 mip。
         CmdTransitionImageLayout(
             commandBuffer,
-            textureImage_cube,
+            material.textureImage,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
             VK_IMAGE_ASPECT_COLOR_BIT,
             0,
-            textureMipLevels_cube);
-        CmdCopyBufferToImage(commandBuffer, stagingBuffer, textureImage_cube, texture.width, texture.height);
-        CmdGenerateMipmaps(commandBuffer, textureImage_cube, VK_FORMAT_R8G8B8A8_SRGB, texture.width, texture.height, textureMipLevels_cube);
+            material.textureMipLevels);
+        CmdCopyBufferToImage(commandBuffer, stagingBuffer, material.textureImage, texture.width, texture.height);
+        CmdGenerateMipmaps(commandBuffer, material.textureImage, VK_FORMAT_R8G8B8A8_SRGB, texture.width, texture.height, material.textureMipLevels);
     });
 
     VkImageViewCreateInfo imageViewCreateInfo{};
     imageViewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    imageViewCreateInfo.image = textureImage_cube;
+    imageViewCreateInfo.image = material.textureImage;
     imageViewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     imageViewCreateInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
     imageViewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     imageViewCreateInfo.subresourceRange.baseMipLevel = 0;
-    imageViewCreateInfo.subresourceRange.levelCount = textureMipLevels_cube;
+    imageViewCreateInfo.subresourceRange.levelCount = material.textureMipLevels;
     imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
     imageViewCreateInfo.subresourceRange.layerCount = 1;
-    if (VkResult result = vkCreateImageView(graphicsBase::Base().Device(), &imageViewCreateInfo, nullptr, &textureImageView_cube)) {
+    if (VkResult result = vkCreateImageView(graphicsBase::Base().Device(), &imageViewCreateInfo, nullptr, &material.textureImageView)) {
         std::cout << std::format("[ main ] ERROR\nFailed to create texture image view!\nError code: {}\n", int32_t(result));
         abort();
     }
@@ -587,91 +612,116 @@ void CreateTextureResources() {
     samplerCreateInfo.maxAnisotropy = features.samplerAnisotropy ? maxAnisotropy : 1.0f;
     samplerCreateInfo.compareEnable = VK_FALSE;
     samplerCreateInfo.minLod = 0.0f;
-    samplerCreateInfo.maxLod = static_cast<float>(textureMipLevels_cube - 1);
+    samplerCreateInfo.maxLod = static_cast<float>(material.textureMipLevels - 1);
     samplerCreateInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     samplerCreateInfo.unnormalizedCoordinates = VK_FALSE;
-    if (VkResult result = vkCreateSampler(graphicsBase::Base().Device(), &samplerCreateInfo, nullptr, &textureSampler_cube)) {
+    if (VkResult result = vkCreateSampler(graphicsBase::Base().Device(), &samplerCreateInfo, nullptr, &material.textureSampler)) {
         std::cout << std::format("[ main ] ERROR\nFailed to create texture sampler!\nError code: {}\n", int32_t(result));
         abort();
     }
+
+    return material;
+}
+
+void DestroyMaterialResources() {
+    auto device = graphicsBase::Base().Device();
+    for (auto& material : materialResources) {
+        if (material.textureSampler)
+            vkDestroySampler(device, material.textureSampler, nullptr);
+        if (material.textureImageView)
+            vkDestroyImageView(device, material.textureImageView, nullptr);
+        if (material.textureImage)
+            vkDestroyImage(device, material.textureImage, nullptr);
+        material.textureSampler = VK_NULL_HANDLE;
+        material.textureImageView = VK_NULL_HANDLE;
+        material.textureImage = VK_NULL_HANDLE;
+    }
+    materialResources.clear();
 }
 void CreateDescriptorSet() {
     const std::array poolSizes = {
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 },
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1 },
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, 1 }
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(materialResources.size() * 2) },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, static_cast<uint32_t>(materialResources.size()) },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, static_cast<uint32_t>(materialResources.size()) }
     };
 
     VkDescriptorPoolCreateInfo poolCreateInfo{};
     poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolCreateInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolCreateInfo.pPoolSizes = poolSizes.data();
-    poolCreateInfo.maxSets = 1;
+    poolCreateInfo.maxSets = static_cast<uint32_t>(materialResources.size());
 
     if (VkResult result = vkCreateDescriptorPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &descriptorPool_cube)) {
         std::cout << std::format("[ main ] ERROR\nFailed to create descriptor pool!\nError code: {}\n", int32_t(result));
         abort();
     }
 
+    std::vector<VkDescriptorSetLayout> layouts(materialResources.size(), descriptorSetLayout_cube);
+    std::vector<VkDescriptorSet> descriptorSets(materialResources.size());
+
     VkDescriptorSetAllocateInfo allocateInfo{};
     allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocateInfo.descriptorPool = descriptorPool_cube;
-    allocateInfo.descriptorSetCount = 1;
-    allocateInfo.pSetLayouts = &descriptorSetLayout_cube;
+    allocateInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
+    allocateInfo.pSetLayouts = layouts.data();
 
-    if (VkResult result = vkAllocateDescriptorSets(graphicsBase::Base().Device(), &allocateInfo, &descriptorSet_cube)) {
-        std::cout << std::format("[ main ] ERROR\nFailed to allocate descriptor set!\nError code: {}\n", int32_t(result));
+    if (VkResult result = vkAllocateDescriptorSets(graphicsBase::Base().Device(), &allocateInfo, descriptorSets.data())) {
+        std::cout << std::format("[ main ] ERROR\nFailed to allocate descriptor sets!\nError code: {}\n", int32_t(result));
         abort();
     }
 
-    VkDescriptorBufferInfo bufferInfo{};
-    bufferInfo.buffer = uniformBuffer_cube;
-    bufferInfo.offset = 0;
-    bufferInfo.range = sizeof(UniformBufferObject);
+    for (size_t i = 0; i < materialResources.size(); ++i) {
+        auto& material = materialResources[i];
+        material.descriptorSet = descriptorSets[i];
 
-    VkDescriptorImageInfo textureInfo{};
-    textureInfo.imageView = textureImageView_cube;
-    textureInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = uniformBuffer_cube;
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(UniformBufferObject);
 
-    VkDescriptorImageInfo samplerInfo{};
-    samplerInfo.sampler = textureSampler_cube;
+        VkDescriptorImageInfo textureInfo{};
+        textureInfo.imageView = material.textureImageView;
+        textureInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    VkDescriptorBufferInfo lightInfo{};
-    lightInfo.buffer = lightBuffer;
-    lightInfo.offset = 0;
-    lightInfo.range = sizeof(Light);
+        VkDescriptorImageInfo samplerInfo{};
+        samplerInfo.sampler = material.textureSampler;
 
-    // descriptor set 里记录的不是数据本体，而是“shader 应该去哪里读这些资源”的描述信息。
-    std::array<VkWriteDescriptorSet, 4> writes{};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = descriptorSet_cube;
-    writes[0].dstBinding = 0;
-    writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    writes[0].pBufferInfo = &bufferInfo;
+        VkDescriptorBufferInfo lightInfo{};
+        lightInfo.buffer = lightBuffer;
+        lightInfo.offset = 0;
+        lightInfo.range = sizeof(Light);
 
-    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = descriptorSet_cube;
-    writes[1].dstBinding = 1;
-    writes[1].descriptorCount = 1;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    writes[1].pImageInfo = &textureInfo;
+        std::array<VkWriteDescriptorSet, 4> writes{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = material.descriptorSet;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].pBufferInfo = &bufferInfo;
 
-    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[2].dstSet = descriptorSet_cube;
-    writes[2].dstBinding = 2;
-    writes[2].descriptorCount = 1;
-    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-    writes[2].pImageInfo = &samplerInfo;
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = material.descriptorSet;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        writes[1].pImageInfo = &textureInfo;
 
-    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[3].dstSet = descriptorSet_cube;
-    writes[3].dstBinding = 3;
-    writes[3].descriptorCount = 1;
-    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    writes[3].pBufferInfo = &lightInfo;
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet = material.descriptorSet;
+        writes[2].dstBinding = 2;
+        writes[2].descriptorCount = 1;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        writes[2].pImageInfo = &samplerInfo;
 
-    vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet = material.descriptorSet;
+        writes[3].dstBinding = 3;
+        writes[3].descriptorCount = 1;
+        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[3].pBufferInfo = &lightInfo;
+
+        vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
 }
 
 glm::mat4 BuildModelMatrix(const RenderObject& object, float time) {
@@ -764,19 +814,6 @@ void CreatePipeline() {
     Create();
 }
 
-void DestroyTextureResources() {
-    auto device = graphicsBase::Base().Device();
-    if (textureSampler_cube)
-        vkDestroySampler(device, textureSampler_cube, nullptr);
-    if (textureImageView_cube)
-        vkDestroyImageView(device, textureImageView_cube, nullptr);
-    if (textureImage_cube)
-        vkDestroyImage(device, textureImage_cube, nullptr);
-    textureSampler_cube = VK_NULL_HANDLE;
-    textureImageView_cube = VK_NULL_HANDLE;
-    textureImage_cube = VK_NULL_HANDLE;
-}
-
 void DestroyDescriptors() {
     auto device = graphicsBase::Base().Device();
     if (descriptorPool_cube)
@@ -785,7 +822,6 @@ void DestroyDescriptors() {
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout_cube, nullptr);
     descriptorPool_cube = VK_NULL_HANDLE;
     descriptorSetLayout_cube = VK_NULL_HANDLE;
-    descriptorSet_cube = VK_NULL_HANDLE;
 }
 
 int main() {
@@ -804,10 +840,14 @@ int main() {
         const auto mesh = modelLoading::LoadObj(meshPath);
         meshResources.push_back(CreateMeshResource(mesh));
     }
-    renderObjects = CreateDefaultRenderObjects(static_cast<uint32_t>(meshResources.size()));
+    const auto materialPaths = DiscoverMaterialPaths();
+    materialResources.clear();
+    materialResources.reserve(materialPaths.size());
+    for (const auto& materialPath : materialPaths)
+        materialResources.push_back(CreateMaterialResource(materialPath));
+    renderObjects = CreateDefaultRenderObjects(static_cast<uint32_t>(meshResources.size()), static_cast<uint32_t>(materialResources.size()));
     CreateUniformResources();
     CreateLightResources();
-    CreateTextureResources();
     CreateDescriptorSet();
     CreatePipeline();
     camera_main.AttachToWindow(pWindow);
@@ -854,26 +894,29 @@ int main() {
         renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, clearValues);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_cube);
 
-        // pipeline 只知道“shader 需要一个 set 0”，
-        // 真正这次 draw 用哪一个 descriptor set，还是在命令里绑定。
-        vkCmdBindDescriptorSets(
-            commandBuffer,
-            VK_PIPELINE_BIND_POINT_GRAPHICS,
-            pipelineLayout_cube,
-            0,
-            1,
-            &descriptorSet_cube,
-            0,
-            nullptr);
-
         // 顶点缓冲提供顶点属性，索引缓冲决定三角形怎么拼接这些顶点。
         for (const auto& renderObject : renderObjects) {
             if (renderObject.meshIndex >= meshResources.size()) {
                 std::cout << std::format("[ main ] ERROR\nInvalid mesh index: {}\n", renderObject.meshIndex);
                 abort();
             }
+            if (renderObject.materialIndex >= materialResources.size()) {
+                std::cout << std::format("[ main ] ERROR\nInvalid material index: {}\n", renderObject.materialIndex);
+                abort();
+            }
 
             const auto& mesh = meshResources[renderObject.meshIndex];
+            const auto& material = materialResources[renderObject.materialIndex];
+            vkCmdBindDescriptorSets(
+                commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                pipelineLayout_cube,
+                0,
+                1,
+                &material.descriptorSet,
+                0,
+                nullptr);
+
             VkBuffer vertexBuffers[] = { mesh.vertexBuffer };
             VkDeviceSize offsets[] = { 0 };
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
@@ -904,11 +947,17 @@ int main() {
 
     vkDeviceWaitIdle(graphicsBase::Base().Device());
     DestroyDescriptors();
-    DestroyTextureResources();
+    DestroyMaterialResources();
     DestroyMeshResources();
     TerminateWindow();
     return 0;
 }
+
+
+
+
+
+
 
 
 
