@@ -228,8 +228,8 @@ void CmdTransitionImageLayout(
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = image;
     barrier.subresourceRange.aspectMask = aspectMask;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseMipLevel = baseMipLevel;
+    barrier.subresourceRange.levelCount = levelCount;
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.layerCount = 1;
 
@@ -390,7 +390,7 @@ void CreateDescriptorSetLayout() {
     uboBinding.binding = 0;
     uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     uboBinding.descriptorCount = 1;
-    uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutBinding textureBinding{};
     textureBinding.binding = 1;
