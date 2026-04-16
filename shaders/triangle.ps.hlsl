@@ -29,15 +29,17 @@ cbuffer CameraData : register(b0)
 
 float ComputeShadowFactor(float4 shadowPosition)
 {
-    if (shadowPosition.w <= 0.0f)
+    if (shadowPosition.w <= 0.0f) // 在光的背后
         return 1.0f;
 
-    float3 projected = shadowPosition.xyz / shadowPosition.w;
+    float3 projected = shadowPosition.xyz / shadowPosition.w; // clip -> NDC
+    // 在光可视范围之外
     if (projected.x < -1.0f || projected.x > 1.0f ||
         projected.y < -1.0f || projected.y > 1.0f ||
         projected.z <= 0.0f || projected.z > 1.0f)
         return 1.0f;
 
+    // 光源视角下的uv
     float2 shadowUv = projected.xy * 0.5f + 0.5f;
     float currentDepth = projected.z;
     float shadowDepth = shadowMapTexture.Sample(shadowMapSampler, shadowUv).r;

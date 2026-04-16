@@ -93,6 +93,8 @@ VkDescriptorSet descriptorSet_shadow = VK_NULL_HANDLE;
 
 camera camera_main; // 主相机，只负责生成 view/proj
 
+
+// 很重要的解耦，渲染实体和资源分离
 std::vector<MeshResource> meshResources;
 std::vector<MaterialResource> materialResources;
 std::vector<RenderObject> renderObjects;
