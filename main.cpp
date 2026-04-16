@@ -17,6 +17,8 @@ using namespace vulkan;
 struct UniformBufferObject {
     glm::mat4 view;
     glm::mat4 proj;
+    glm::mat4 viewInv;
+    glm::mat4 projInv;
     glm::vec3 cameraPosition;
     float _pad0;
 };
@@ -73,23 +75,28 @@ struct RenderObject {
     glm::vec3 scale;
 };
 
-pipelineLayout pipelineLayout_cube;   // 立方体管线布局
-pipelineLayout pipelineLayout_shadow; // shadow pass 管线布局
-pipeline pipeline_cube;               // 立方体管线
-pipeline pipeline_shadow;             // shadow map 管线
-buffer uniformBuffer_cube;            // uniform 缓冲
-buffer lightBuffer;                   // 光照 uniform 缓冲
-buffer shadowUniformBuffer;           // 光源视角矩阵
+pipelineLayout pipelineLayout_gbuffer;  // G-buffer pass 管线布局
+pipelineLayout pipelineLayout_shadow;   // shadow pass 管线布局
+pipelineLayout pipelineLayout_lighting; // lighting pass 管线布局
+pipeline pipeline_gbuffer;              // G-buffer 管线
+pipeline pipeline_shadow;               // shadow map 管线
+pipeline pipeline_lighting;             // fullscreen lighting 管线
+buffer uniformBuffer_camera;            // 相机 uniform 缓冲
+buffer lightBuffer;                     // 光照 uniform 缓冲
+buffer shadowUniformBuffer;             // 光源视角矩阵
 
-deviceMemory uniformMemory_cube;      // uniform 缓冲绑定的显存
-deviceMemory lightMemory;             // 光照 uniform 显存
-deviceMemory shadowUniformMemory;     // shadow uniform 显存
+deviceMemory uniformMemory_camera;      // 相机 uniform 显存
+deviceMemory lightMemory;               // 光照 uniform 显存
+deviceMemory shadowUniformMemory;       // shadow uniform 显存
 
-VkDescriptorSetLayout descriptorSetLayout_cube = VK_NULL_HANDLE;
+VkDescriptorSetLayout descriptorSetLayout_gbuffer = VK_NULL_HANDLE;
 VkDescriptorSetLayout descriptorSetLayout_shadow = VK_NULL_HANDLE;
-VkDescriptorPool descriptorPool_cube = VK_NULL_HANDLE;
+VkDescriptorSetLayout descriptorSetLayout_lighting = VK_NULL_HANDLE;
+VkDescriptorPool descriptorPool_gbuffer = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_shadow = VK_NULL_HANDLE;
+VkDescriptorPool descriptorPool_lighting = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_shadow = VK_NULL_HANDLE;
+VkDescriptorSet descriptorSet_lighting = VK_NULL_HANDLE;
 
 camera camera_main; // 主相机，只负责生成 view/proj
 
@@ -155,6 +162,11 @@ const auto& RenderPassAndFramebuffers() {
 
 const auto& ShadowRenderPassResources() {
     static const auto& rpwf = easyVulkan::CreateRpwf_Shadow();
+    return rpwf;
+}
+
+const auto& GBufferPassResources() {
+    static const auto& rpwf = easyVulkan::CreateRpwf_GBuffer();
     return rpwf;
 }
 
@@ -432,18 +444,64 @@ void CmdPrepareShadowMapForSampling(VkCommandBuffer commandBuffer, VkImage shado
         1, &barrier);
 }
 
-void CreateDescriptorSetLayout() {
-    // set 0 / binding 0：给 VS 的 uniform buffer
-    // set 0 / binding 1：给 PS 的 sampled image
-    // set 0 / binding 2：给 PS 的 sampler
-    // set 0 / binding 3：给 PS 的光照数据
-    // set 0 / binding 4/5：shadow map image + sampler
-    // set 0 / binding 6：给 VS 的 light-space 矩阵
+void CmdPrepareGBufferForSampling(VkCommandBuffer commandBuffer) {
+    const auto& gbuffer = GBufferPassResources();
+
+    auto Transition = [&](VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout, VkImageAspectFlags aspectMask, VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask) {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange.aspectMask = aspectMask;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.srcAccessMask = srcAccessMask;
+        barrier.dstAccessMask = dstAccessMask;
+
+        vkCmdPipelineBarrier(
+            commandBuffer,
+            aspectMask == VK_IMAGE_ASPECT_COLOR_BIT ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT : (VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT),
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &barrier);
+    };
+
+    Transition(
+        gbuffer.albedo.image,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_IMAGE_ASPECT_COLOR_BIT,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_ACCESS_SHADER_READ_BIT);
+    Transition(
+        gbuffer.normal.image,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_IMAGE_ASPECT_COLOR_BIT,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_ACCESS_SHADER_READ_BIT);
+    Transition(
+        gbuffer.depth.image,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+        VK_IMAGE_ASPECT_DEPTH_BIT,
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        VK_ACCESS_SHADER_READ_BIT);
+}
+
+void CreateGBufferDescriptorSetLayout() {
     VkDescriptorSetLayoutBinding uboBinding{};
     uboBinding.binding = 0;
     uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     uboBinding.descriptorCount = 1;
-    uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
     VkDescriptorSetLayoutBinding textureBinding{};
     textureBinding.binding = 1;
@@ -457,47 +515,15 @@ void CreateDescriptorSetLayout() {
     samplerBinding.descriptorCount = 1;
     samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    VkDescriptorSetLayoutBinding lightBinding{};
-    lightBinding.binding = 3;
-    lightBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    lightBinding.descriptorCount = 1;
-    lightBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutBinding shadowImageBinding{};
-    shadowImageBinding.binding = 4;
-    shadowImageBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    shadowImageBinding.descriptorCount = 1;
-    shadowImageBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutBinding shadowSamplerBinding{};
-    shadowSamplerBinding.binding = 5;
-    shadowSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-    shadowSamplerBinding.descriptorCount = 1;
-    shadowSamplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutBinding shadowMatrixBinding{};
-    shadowMatrixBinding.binding = 6;
-    shadowMatrixBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    shadowMatrixBinding.descriptorCount = 1;
-    shadowMatrixBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-    const std::array bindings = {
-        uboBinding,
-        textureBinding,
-        samplerBinding,
-        lightBinding,
-        shadowImageBinding,
-        shadowSamplerBinding,
-        shadowMatrixBinding
-    };
+    const std::array bindings = { uboBinding, textureBinding, samplerBinding };
 
     VkDescriptorSetLayoutCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     createInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     createInfo.pBindings = bindings.data();
 
-    if (VkResult result = vkCreateDescriptorSetLayout(graphicsBase::Base().Device(), &createInfo, nullptr, &descriptorSetLayout_cube)) {
-        std::cout << std::format("[ main ] ERROR\nFailed to create descriptor set layout!\nError code: {}\n", int32_t(result));
+    if (VkResult result = vkCreateDescriptorSetLayout(graphicsBase::Base().Device(), &createInfo, nullptr, &descriptorSetLayout_gbuffer)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create G-buffer descriptor set layout!\nError code: {}\n", int32_t(result));
         abort();
     }
 }
@@ -520,9 +546,85 @@ void CreateShadowDescriptorSetLayout() {
     }
 }
 
-void CreateLayout() {
-    // pipeline layout 描述的是“这个 pipeline 期望看到哪些 descriptor set layout”。
-    // 真正这次 draw 使用哪一个 descriptor set，要在录命令时再 bind。
+void CreateLightingDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding cameraBinding{};
+    cameraBinding.binding = 0;
+    cameraBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    cameraBinding.descriptorCount = 1;
+    cameraBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding lightBinding{};
+    lightBinding.binding = 1;
+    lightBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    lightBinding.descriptorCount = 1;
+    lightBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding shadowMatrixBinding{};
+    shadowMatrixBinding.binding = 2;
+    shadowMatrixBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    shadowMatrixBinding.descriptorCount = 1;
+    shadowMatrixBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding albedoBinding{};
+    albedoBinding.binding = 3;
+    albedoBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    albedoBinding.descriptorCount = 1;
+    albedoBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding gbufferSamplerBinding{};
+    gbufferSamplerBinding.binding = 4;
+    gbufferSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    gbufferSamplerBinding.descriptorCount = 1;
+    gbufferSamplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding normalBinding{};
+    normalBinding.binding = 5;
+    normalBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    normalBinding.descriptorCount = 1;
+    normalBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding depthBinding{};
+    depthBinding.binding = 6;
+    depthBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    depthBinding.descriptorCount = 1;
+    depthBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding depthSamplerBinding{};
+    depthSamplerBinding.binding = 7;
+    depthSamplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    depthSamplerBinding.descriptorCount = 1;
+    depthSamplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding shadowImageBinding{};
+    shadowImageBinding.binding = 8;
+    shadowImageBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    shadowImageBinding.descriptorCount = 1;
+    shadowImageBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    const std::array bindings = {
+        cameraBinding,
+        lightBinding,
+        shadowMatrixBinding,
+        albedoBinding,
+        gbufferSamplerBinding,
+        normalBinding,
+        depthBinding,
+        depthSamplerBinding,
+        shadowImageBinding
+    };
+
+    VkDescriptorSetLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    createInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    createInfo.pBindings = bindings.data();
+
+    if (VkResult result = vkCreateDescriptorSetLayout(graphicsBase::Base().Device(), &createInfo, nullptr, &descriptorSetLayout_lighting)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create lighting descriptor set layout!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+}
+
+void CreateGBufferLayout() {
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushConstantRange.offset = 0;
@@ -530,10 +632,10 @@ void CreateLayout() {
 
     VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{};
     pipelineLayoutCreateInfo.setLayoutCount = 1;
-    pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout_cube;
+    pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout_gbuffer;
     pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
     pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
-    pipelineLayout_cube.Create(pipelineLayoutCreateInfo);
+    pipelineLayout_gbuffer.Create(pipelineLayoutCreateInfo);
 }
 
 void CreateShadowLayout() {
@@ -548,6 +650,13 @@ void CreateShadowLayout() {
     pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
     pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
     pipelineLayout_shadow.Create(pipelineLayoutCreateInfo);
+}
+
+void CreateLightingLayout() {
+    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{};
+    pipelineLayoutCreateInfo.setLayoutCount = 1;
+    pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout_lighting;
+    pipelineLayout_lighting.Create(pipelineLayoutCreateInfo);
 }
 
 // CreateGeometry()：把模型数据真正送进 GPU
@@ -595,19 +704,17 @@ void DestroyMeshResources() {
     meshResources.clear();
 }
 void CreateUniformResources() {
-    // uniform buffer 存的是“每帧会变化，但当前 draw 共用”的小块数据，
-    // 这里就是 model/view/proj 三个矩阵。
-    uniformBuffer_cube.Create(sizeof(UniformBufferObject), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    uniformBuffer_camera.Create(sizeof(UniformBufferObject), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 
-    const auto requirements = uniformBuffer_cube.MemoryRequirements();
+    const auto requirements = uniformBuffer_camera.MemoryRequirements();
     VkMemoryAllocateInfo allocateInfo = {
         .allocationSize = requirements.size,
         .memoryTypeIndex = FindMemoryTypeIndex(
             requirements.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
     };
-    uniformMemory_cube.Create(allocateInfo);
-    uniformBuffer_cube.BindMemory(uniformMemory_cube);
+    uniformMemory_camera.Create(allocateInfo);
+    uniformBuffer_camera.BindMemory(uniformMemory_camera);
 }
 
 void CreateLightResources() {
@@ -763,11 +870,11 @@ void DestroyMaterialResources() {
     }
     materialResources.clear();
 }
-void CreateDescriptorSet() {
+void CreateGBufferDescriptorSet() {
     const std::array poolSizes = {
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(materialResources.size() * 3) },
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, static_cast<uint32_t>(materialResources.size() * 2) },
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, static_cast<uint32_t>(materialResources.size() * 2) }
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(materialResources.size()) },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, static_cast<uint32_t>(materialResources.size()) },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, static_cast<uint32_t>(materialResources.size()) }
     };
 
     VkDescriptorPoolCreateInfo poolCreateInfo{};
@@ -776,33 +883,31 @@ void CreateDescriptorSet() {
     poolCreateInfo.pPoolSizes = poolSizes.data();
     poolCreateInfo.maxSets = static_cast<uint32_t>(materialResources.size());
 
-    if (VkResult result = vkCreateDescriptorPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &descriptorPool_cube)) {
-        std::cout << std::format("[ main ] ERROR\nFailed to create descriptor pool!\nError code: {}\n", int32_t(result));
+    if (VkResult result = vkCreateDescriptorPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &descriptorPool_gbuffer)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create G-buffer descriptor pool!\nError code: {}\n", int32_t(result));
         abort();
     }
 
-    std::vector<VkDescriptorSetLayout> layouts(materialResources.size(), descriptorSetLayout_cube);
+    std::vector<VkDescriptorSetLayout> layouts(materialResources.size(), descriptorSetLayout_gbuffer);
     std::vector<VkDescriptorSet> descriptorSets(materialResources.size());
 
     VkDescriptorSetAllocateInfo allocateInfo{};
     allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocateInfo.descriptorPool = descriptorPool_cube;
+    allocateInfo.descriptorPool = descriptorPool_gbuffer;
     allocateInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
     allocateInfo.pSetLayouts = layouts.data();
 
     if (VkResult result = vkAllocateDescriptorSets(graphicsBase::Base().Device(), &allocateInfo, descriptorSets.data())) {
-        std::cout << std::format("[ main ] ERROR\nFailed to allocate descriptor sets!\nError code: {}\n", int32_t(result));
+        std::cout << std::format("[ main ] ERROR\nFailed to allocate G-buffer descriptor sets!\nError code: {}\n", int32_t(result));
         abort();
     }
-
-    const auto& shadowResources = ShadowRenderPassResources();
 
     for (size_t i = 0; i < materialResources.size(); ++i) {
         auto& material = materialResources[i];
         material.descriptorSet = descriptorSets[i];
 
         VkDescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = uniformBuffer_cube;
+        bufferInfo.buffer = uniformBuffer_camera;
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(UniformBufferObject);
 
@@ -813,24 +918,7 @@ void CreateDescriptorSet() {
         VkDescriptorImageInfo samplerInfo{};
         samplerInfo.sampler = material.textureSampler;
 
-        VkDescriptorBufferInfo lightInfo{};
-        lightInfo.buffer = lightBuffer;
-        lightInfo.offset = 0;
-        lightInfo.range = sizeof(Light);
-
-        VkDescriptorImageInfo shadowTextureInfo{};
-        shadowTextureInfo.imageView = shadowResources.depthImageView;
-        shadowTextureInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
-        VkDescriptorImageInfo shadowSamplerInfo{};
-        shadowSamplerInfo.sampler = shadowResources.shadowSampler;
-
-        VkDescriptorBufferInfo shadowMatrixInfo{};
-        shadowMatrixInfo.buffer = shadowUniformBuffer;
-        shadowMatrixInfo.offset = 0;
-        shadowMatrixInfo.range = sizeof(ShadowUniformObject);
-
-        std::array<VkWriteDescriptorSet, 7> writes{};
+        std::array<VkWriteDescriptorSet, 3> writes{};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = material.descriptorSet;
         writes[0].dstBinding = 0;
@@ -851,34 +939,6 @@ void CreateDescriptorSet() {
         writes[2].descriptorCount = 1;
         writes[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
         writes[2].pImageInfo = &samplerInfo;
-
-        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[3].dstSet = material.descriptorSet;
-        writes[3].dstBinding = 3;
-        writes[3].descriptorCount = 1;
-        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[3].pBufferInfo = &lightInfo;
-
-        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[4].dstSet = material.descriptorSet;
-        writes[4].dstBinding = 4;
-        writes[4].descriptorCount = 1;
-        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        writes[4].pImageInfo = &shadowTextureInfo;
-
-        writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[5].dstSet = material.descriptorSet;
-        writes[5].dstBinding = 5;
-        writes[5].descriptorCount = 1;
-        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-        writes[5].pImageInfo = &shadowSamplerInfo;
-
-        writes[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[6].dstSet = material.descriptorSet;
-        writes[6].dstBinding = 6;
-        writes[6].descriptorCount = 1;
-        writes[6].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[6].pBufferInfo = &shadowMatrixInfo;
 
         vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     }
@@ -926,6 +986,150 @@ void CreateShadowDescriptorSet() {
     vkUpdateDescriptorSets(graphicsBase::Base().Device(), 1, &write, 0, nullptr);
 }
 
+void UpdateLightingDescriptorSet() {
+    if (!descriptorSet_lighting)
+        return;
+
+    const auto& gbuffer = GBufferPassResources();
+    const auto& shadowResources = ShadowRenderPassResources();
+
+    VkDescriptorBufferInfo cameraInfo{};
+    cameraInfo.buffer = uniformBuffer_camera;
+    cameraInfo.offset = 0;
+    cameraInfo.range = sizeof(UniformBufferObject);
+
+    VkDescriptorBufferInfo lightInfo{};
+    lightInfo.buffer = lightBuffer;
+    lightInfo.offset = 0;
+    lightInfo.range = sizeof(Light);
+
+    VkDescriptorBufferInfo shadowMatrixInfo{};
+    shadowMatrixInfo.buffer = shadowUniformBuffer;
+    shadowMatrixInfo.offset = 0;
+    shadowMatrixInfo.range = sizeof(ShadowUniformObject);
+
+    VkDescriptorImageInfo albedoInfo{};
+    albedoInfo.imageView = gbuffer.albedo.imageView;
+    albedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkDescriptorImageInfo gbufferSamplerInfo{};
+    gbufferSamplerInfo.sampler = gbuffer.sampler;
+
+    VkDescriptorImageInfo normalInfo{};
+    normalInfo.imageView = gbuffer.normal.imageView;
+    normalInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkDescriptorImageInfo depthInfo{};
+    depthInfo.imageView = gbuffer.depth.imageView;
+    depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+    VkDescriptorImageInfo depthSamplerInfo{};
+    depthSamplerInfo.sampler = shadowResources.shadowSampler;
+
+    VkDescriptorImageInfo shadowInfo{};
+    shadowInfo.imageView = shadowResources.depthImageView;
+    shadowInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+    std::array<VkWriteDescriptorSet, 9> writes{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = descriptorSet_lighting;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[0].pBufferInfo = &cameraInfo;
+
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = descriptorSet_lighting;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[1].pBufferInfo = &lightInfo;
+
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = descriptorSet_lighting;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[2].pBufferInfo = &shadowMatrixInfo;
+
+    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[3].dstSet = descriptorSet_lighting;
+    writes[3].dstBinding = 3;
+    writes[3].descriptorCount = 1;
+    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    writes[3].pImageInfo = &albedoInfo;
+
+    writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[4].dstSet = descriptorSet_lighting;
+    writes[4].dstBinding = 4;
+    writes[4].descriptorCount = 1;
+    writes[4].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    writes[4].pImageInfo = &gbufferSamplerInfo;
+
+    writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[5].dstSet = descriptorSet_lighting;
+    writes[5].dstBinding = 5;
+    writes[5].descriptorCount = 1;
+    writes[5].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    writes[5].pImageInfo = &normalInfo;
+
+    writes[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[6].dstSet = descriptorSet_lighting;
+    writes[6].dstBinding = 6;
+    writes[6].descriptorCount = 1;
+    writes[6].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    writes[6].pImageInfo = &depthInfo;
+
+    writes[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[7].dstSet = descriptorSet_lighting;
+    writes[7].dstBinding = 7;
+    writes[7].descriptorCount = 1;
+    writes[7].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    writes[7].pImageInfo = &depthSamplerInfo;
+
+    writes[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[8].dstSet = descriptorSet_lighting;
+    writes[8].dstBinding = 8;
+    writes[8].descriptorCount = 1;
+    writes[8].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    writes[8].pImageInfo = &shadowInfo;
+
+    vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+}
+
+void CreateLightingDescriptorSet() {
+    const std::array poolSizes = {
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 4 },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, 2 }
+    };
+
+    VkDescriptorPoolCreateInfo poolCreateInfo{};
+    poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCreateInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolCreateInfo.pPoolSizes = poolSizes.data();
+    poolCreateInfo.maxSets = 1;
+
+    if (VkResult result = vkCreateDescriptorPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &descriptorPool_lighting)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create lighting descriptor pool!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = descriptorPool_lighting;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &descriptorSetLayout_lighting;
+
+    if (VkResult result = vkAllocateDescriptorSets(graphicsBase::Base().Device(), &allocateInfo, &descriptorSet_lighting)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to allocate lighting descriptor set!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    UpdateLightingDescriptorSet();
+    graphicsBase::Base().AddCallback_CreateSwapchain(UpdateLightingDescriptorSet);
+}
+
 glm::mat4 BuildModelMatrix(const RenderObject& object, float time) {
     glm::mat4 translation = glm::translate(glm::mat4(1.0f), object.position);
     glm::mat4 rotation = glm::rotate(
@@ -956,33 +1160,31 @@ glm::mat4 BuildLightViewProjection() {
 void UpdateUniformBuffer() {
     UniformBufferObject ubo{};
 
-    // 相机模块只负责观察和投影：
-    // view 表示“相机从哪里看”，proj 表示“怎么把 3D 压到屏幕上”。
     ubo.view = camera_main.View();
     ubo.proj = camera_main.Projection(windowSize);
+    ubo.viewInv = glm::inverse(ubo.view);
+    ubo.projInv = glm::inverse(ubo.proj);
     ubo.cameraPosition = camera_main.position;
 
-    uniformMemory_cube.Write(&ubo, sizeof(ubo));
+    uniformMemory_camera.Write(&ubo, sizeof(ubo));
 
     ShadowUniformObject shadowUbo{};
     shadowUbo.lightViewProj = BuildLightViewProjection();
     shadowUniformMemory.Write(&shadowUbo, sizeof(shadowUbo));
 }
 
-void CreatePipeline() {
-    // shader 现在从顶点缓冲读取位置、法线、UV，
-    // PS 再根据 descriptor set 里的纹理和光照资源做采样与计算。
-    static shaderModule vs("shaders/triangle.vs.spv");
-    static shaderModule ps("shaders/triangle.ps.spv");
-    static VkPipelineShaderStageCreateInfo shaderStageCreateInfos_cube[2] = {
+void CreateGBufferPipeline() {
+    static shaderModule vs("shaders/gbuffer.vs.spv");
+    static shaderModule ps("shaders/gbuffer.ps.spv");
+    static VkPipelineShaderStageCreateInfo shaderStageCreateInfos_gbuffer[2] = {
         vs.StageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT),
         ps.StageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT)
     };
 
     auto Create = [] {
         graphicsPipelineCreateInfoPack pipelineCiPack;
-        pipelineCiPack.createInfo.layout = pipelineLayout_cube;
-        pipelineCiPack.createInfo.renderPass = RenderPassAndFramebuffers().renderPass;
+        pipelineCiPack.createInfo.layout = pipelineLayout_gbuffer;
+        pipelineCiPack.createInfo.renderPass = GBufferPassResources().renderPass;
         pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_FILL;
         pipelineCiPack.rasterizationStateCi.cullMode = VK_CULL_MODE_BACK_BIT;
@@ -1015,21 +1217,23 @@ void CreatePipeline() {
             .offset = offsetof(modelLoading::Vertex, uv)
         });
 
-        pipelineCiPack.viewports.emplace_back(0.f, 0.f, float(windowSize.width), float(windowSize.height), 0.f, 1.f);
-        pipelineCiPack.scissors.emplace_back(VkOffset2D{}, windowSize);
+        const auto& gbuffer = GBufferPassResources();
+        pipelineCiPack.viewports.emplace_back(0.f, 0.f, float(gbuffer.extent.width), float(gbuffer.extent.height), 0.f, 1.f);
+        pipelineCiPack.scissors.emplace_back(VkOffset2D{}, gbuffer.extent);
         pipelineCiPack.multisampleStateCi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         pipelineCiPack.depthStencilStateCi.depthTestEnable = VK_TRUE;
         pipelineCiPack.depthStencilStateCi.depthWriteEnable = VK_TRUE;
         pipelineCiPack.depthStencilStateCi.depthCompareOp = VK_COMPARE_OP_LESS;
         pipelineCiPack.colorBlendAttachmentStates.push_back({ .colorWriteMask = 0b1111 });
+        pipelineCiPack.colorBlendAttachmentStates.push_back({ .colorWriteMask = 0b1111 });
         pipelineCiPack.UpdateAllArrays();
         pipelineCiPack.createInfo.stageCount = 2;
-        pipelineCiPack.createInfo.pStages = shaderStageCreateInfos_cube;
-        pipeline_cube.Create(pipelineCiPack);
+        pipelineCiPack.createInfo.pStages = shaderStageCreateInfos_gbuffer;
+        pipeline_gbuffer.Create(pipelineCiPack);
     };
 
     auto Destroy = [] {
-        pipeline_cube.~pipeline();
+        pipeline_gbuffer.~pipeline();
     };
 
     graphicsBase::Base().AddCallback_CreateSwapchain(Create);
@@ -1089,21 +1293,66 @@ void CreateShadowPipeline() {
     pipeline_shadow.Create(pipelineCiPack);
 }
 
+void CreateLightingPipeline() {
+    static shaderModule vs("shaders/lighting.vs.spv");
+    static shaderModule ps("shaders/lighting.ps.spv");
+    static VkPipelineShaderStageCreateInfo shaderStageCreateInfos_lighting[2] = {
+        vs.StageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT),
+        ps.StageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT)
+    };
+
+    auto Create = [] {
+        graphicsPipelineCreateInfoPack pipelineCiPack;
+        pipelineCiPack.createInfo.layout = pipelineLayout_lighting;
+        pipelineCiPack.createInfo.renderPass = RenderPassAndFramebuffers().renderPass;
+        pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_FILL;
+        pipelineCiPack.rasterizationStateCi.cullMode = VK_CULL_MODE_NONE;
+        pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        pipelineCiPack.rasterizationStateCi.lineWidth = 1.0f;
+        pipelineCiPack.viewports.emplace_back(0.f, 0.f, float(windowSize.width), float(windowSize.height), 0.f, 1.f);
+        pipelineCiPack.scissors.emplace_back(VkOffset2D{}, windowSize);
+        pipelineCiPack.multisampleStateCi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        pipelineCiPack.depthStencilStateCi.depthTestEnable = VK_FALSE;
+        pipelineCiPack.depthStencilStateCi.depthWriteEnable = VK_FALSE;
+        pipelineCiPack.colorBlendAttachmentStates.push_back({ .colorWriteMask = 0b1111 });
+        pipelineCiPack.UpdateAllArrays();
+        pipelineCiPack.createInfo.stageCount = 2;
+        pipelineCiPack.createInfo.pStages = shaderStageCreateInfos_lighting;
+        pipeline_lighting.Create(pipelineCiPack);
+    };
+
+    auto Destroy = [] {
+        pipeline_lighting.~pipeline();
+    };
+
+    graphicsBase::Base().AddCallback_CreateSwapchain(Create);
+    graphicsBase::Base().AddCallback_DestroySwapchain(Destroy);
+    Create();
+}
+
 void DestroyDescriptors() {
     auto device = graphicsBase::Base().Device();
-    if (descriptorPool_cube)
-        vkDestroyDescriptorPool(device, descriptorPool_cube, nullptr);
+    if (descriptorPool_gbuffer)
+        vkDestroyDescriptorPool(device, descriptorPool_gbuffer, nullptr);
     if (descriptorPool_shadow)
         vkDestroyDescriptorPool(device, descriptorPool_shadow, nullptr);
-    if (descriptorSetLayout_cube)
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout_cube, nullptr);
+    if (descriptorPool_lighting)
+        vkDestroyDescriptorPool(device, descriptorPool_lighting, nullptr);
+    if (descriptorSetLayout_gbuffer)
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout_gbuffer, nullptr);
     if (descriptorSetLayout_shadow)
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout_shadow, nullptr);
-    descriptorPool_cube = VK_NULL_HANDLE;
+    if (descriptorSetLayout_lighting)
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout_lighting, nullptr);
+    descriptorPool_gbuffer = VK_NULL_HANDLE;
     descriptorPool_shadow = VK_NULL_HANDLE;
-    descriptorSetLayout_cube = VK_NULL_HANDLE;
+    descriptorPool_lighting = VK_NULL_HANDLE;
+    descriptorSetLayout_gbuffer = VK_NULL_HANDLE;
     descriptorSetLayout_shadow = VK_NULL_HANDLE;
+    descriptorSetLayout_lighting = VK_NULL_HANDLE;
     descriptorSet_shadow = VK_NULL_HANDLE;
+    descriptorSet_lighting = VK_NULL_HANDLE;
 }
 
 int main() {
@@ -1112,13 +1361,17 @@ int main() {
 
     const auto& rpwf = RenderPassAndFramebuffers();
     const auto& shadowRpwf = ShadowRenderPassResources();
+    const auto& gbufferRpwf = GBufferPassResources();
     const auto& renderPass = rpwf.renderPass;
     const auto& framebuffers = rpwf.framebuffers;
     const auto& shadowRenderPass = shadowRpwf.shadowPass;
-    CreateDescriptorSetLayout();
+    const auto& gbufferRenderPass = gbufferRpwf.renderPass;
+    CreateGBufferDescriptorSetLayout();
     CreateShadowDescriptorSetLayout();
-    CreateLayout();
+    CreateLightingDescriptorSetLayout();
+    CreateGBufferLayout();
     CreateShadowLayout();
+    CreateLightingLayout();
     const auto meshPaths = DiscoverMeshPaths();
     meshResources.clear();
     meshResources.reserve(meshPaths.size() + 1);
@@ -1140,10 +1393,12 @@ int main() {
     CreateUniformResources();
     CreateLightResources();
     CreateShadowUniformResources();
-    CreateDescriptorSet();
+    CreateGBufferDescriptorSet();
     CreateShadowDescriptorSet();
-    CreatePipeline();
+    CreateLightingDescriptorSet();
+    CreateGBufferPipeline();
     CreateShadowPipeline();
+    CreateLightingPipeline();
     camera_main.AttachToWindow(pWindow);
 
     // 先创建成 signaled，这样第一帧开头的 WaitAndReset 不会阻塞。
@@ -1155,7 +1410,12 @@ int main() {
     commandPool commandPool(graphicsBase::Base().QueueFamilyIndex_Graphics(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
     commandPool.AllocateBuffers(commandBuffer);
 
-    VkClearValue clearValues[] = {
+    VkClearValue screenClearValues[] = {
+        { .color = { 0.f, 0.f, 0.f, 1.f } },
+        { .depthStencil = { 1.0f, 0 } }
+    };
+    VkClearValue gbufferClearValues[] = {
+        { .color = { 0.f, 0.f, 0.f, 1.f } },
         { .color = { 0.f, 0.f, 0.f, 1.f } },
         { .depthStencil = { 1.0f, 0 } }
     };
@@ -1226,10 +1486,8 @@ int main() {
         shadowRenderPass.CmdEnd(commandBuffer);
         CmdPrepareShadowMapForSampling(commandBuffer, shadowRpwf.depthImage);
 
-        renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, clearValues);
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_cube);
-
-        // 顶点缓冲提供顶点属性，索引缓冲决定三角形怎么拼接这些顶点。
+        gbufferRenderPass.CmdBegin(commandBuffer, gbufferRpwf.framebuffer, { {}, gbufferRpwf.extent }, gbufferClearValues);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_gbuffer);
         for (const auto& renderObject : renderObjects) {
             if (renderObject.meshIndex >= meshResources.size()) {
                 std::cout << std::format("[ main ] ERROR\nInvalid mesh index: {}\n", renderObject.meshIndex);
@@ -1245,7 +1503,7 @@ int main() {
             vkCmdBindDescriptorSets(
                 commandBuffer,
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                pipelineLayout_cube,
+                pipelineLayout_gbuffer,
                 0,
                 1,
                 &material.descriptorSet,
@@ -1263,7 +1521,7 @@ int main() {
             };
             vkCmdPushConstants(
                 commandBuffer,
-                pipelineLayout_cube,
+                pipelineLayout_gbuffer,
                 VK_SHADER_STAGE_VERTEX_BIT,
                 0,
                 sizeof(pushConstant),
@@ -1271,6 +1529,21 @@ int main() {
             vkCmdDrawIndexed(commandBuffer, mesh.indexCount, 1, 0, 0, 0);
         }
 
+        gbufferRenderPass.CmdEnd(commandBuffer);
+        CmdPrepareGBufferForSampling(commandBuffer);
+
+        renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, screenClearValues);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lighting);
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            pipelineLayout_lighting,
+            0,
+            1,
+            &descriptorSet_lighting,
+            0,
+            nullptr);
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
         renderPass.CmdEnd(commandBuffer);
         commandBuffer.End();
 
@@ -1282,7 +1555,8 @@ int main() {
 
     vkDeviceWaitIdle(graphicsBase::Base().Device());
     pipeline_shadow.~pipeline();
-    pipeline_cube.~pipeline();
+    pipeline_gbuffer.~pipeline();
+    pipeline_lighting.~pipeline();
     DestroyDescriptors();
     DestroyMaterialResources();
     DestroyMeshResources();

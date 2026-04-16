@@ -58,6 +58,18 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <None Include="shaders\gbuffer.vs.hlsl">
+      <Filter>资源文件</Filter>
+    </None>
+    <None Include="shaders\gbuffer.ps.hlsl">
+      <Filter>资源文件</Filter>
+    </None>
+    <None Include="shaders\lighting.vs.hlsl">
+      <Filter>资源文件</Filter>
+    </None>
+    <None Include="shaders\lighting.ps.hlsl">
+      <Filter>资源文件</Filter>
+    </None>
     <None Include="shaders\shadow.vs.hlsl">
       <Filter>资源文件</Filter>
     </None>

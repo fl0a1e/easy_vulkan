@@ -86,6 +86,25 @@ namespace easyVulkan {
         VkSampler shadowSampler = VK_NULL_HANDLE;
     };
 
+    struct attachmentResource {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkImageView imageView = VK_NULL_HANDLE;
+    };
+
+    struct gBufferPassResources {
+        renderPass renderPass;
+        framebuffer framebuffer;
+        VkExtent2D extent = {};
+        VkFormat albedoFormat = VK_FORMAT_UNDEFINED;
+        VkFormat normalFormat = VK_FORMAT_UNDEFINED;
+        VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+        attachmentResource albedo;
+        attachmentResource normal;
+        attachmentResource depth;
+        VkSampler sampler = VK_NULL_HANDLE;
+    };
+
     // 创建一个直接画到交换链图像的最简 render pass：
     // 颜色附件写到 swapchain，深度附件单独存到一张 depth image。
     const auto& CreateRpwf_Screen() {
@@ -406,6 +425,235 @@ namespace easyVulkan {
 
         ExecuteOnce(rpwf);
         graphicsBase::Base().AddCallback_DestroyDevice(DestroyShadowResources);
+
+        return rpwf;
+    }
+
+    const auto& CreateRpwf_GBuffer() {
+        static gBufferPassResources rpwf;
+
+        rpwf.albedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
+        rpwf.normalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+        rpwf.depthFormat = FindShadowDepthFormat();
+        rpwf.extent = windowSize;
+
+        VkAttachmentDescription albedoAttachmentDescription = {
+            .format = rpwf.albedoFormat,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        };
+
+        VkAttachmentDescription normalAttachmentDescription = {
+            .format = rpwf.normalFormat,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        };
+
+        VkAttachmentDescription depthAttachmentDescription = {
+            .format = rpwf.depthFormat,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        };
+
+        VkAttachmentReference colorAttachmentReferences[] = {
+            { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL },
+            { 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL }
+        };
+        VkAttachmentReference depthAttachmentReference = { 2, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+        VkSubpassDescription subpassDescription = {
+            .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+            .colorAttachmentCount = 2,
+            .pColorAttachments = colorAttachmentReferences,
+            .pDepthStencilAttachment = &depthAttachmentReference
+        };
+
+        VkSubpassDependency subpassDependency = {
+            .srcSubpass = VK_SUBPASS_EXTERNAL,
+            .dstSubpass = 0,
+            .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT
+        };
+
+        VkAttachmentDescription attachmentDescriptions[] = {
+            albedoAttachmentDescription,
+            normalAttachmentDescription,
+            depthAttachmentDescription
+        };
+        VkRenderPassCreateInfo renderPassCreateInfo = {
+            .attachmentCount = 3,
+            .pAttachments = attachmentDescriptions,
+            .subpassCount = 1,
+            .pSubpasses = &subpassDescription,
+            .dependencyCount = 1,
+            .pDependencies = &subpassDependency
+        };
+        rpwf.renderPass.Create(renderPassCreateInfo);
+
+        auto CreateAttachment = [](attachmentResource& attachment, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspectMask) {
+            auto device = graphicsBase::Base().Device();
+
+            VkImageCreateInfo imageCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = format,
+                .extent = { rpwf.extent.width, rpwf.extent.height, 1 },
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = usage,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+            };
+            if (VkResult result = vkCreateImage(device, &imageCreateInfo, nullptr, &attachment.image)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create G-buffer image!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+
+            VkMemoryRequirements requirements{};
+            vkGetImageMemoryRequirements(device, attachment.image, &requirements);
+            VkMemoryAllocateInfo allocateInfo = {
+                .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                .allocationSize = requirements.size,
+                .memoryTypeIndex = FindMemoryTypeIndex(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+            };
+            if (VkResult result = vkAllocateMemory(device, &allocateInfo, nullptr, &attachment.memory)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to allocate G-buffer image memory!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+            vkBindImageMemory(device, attachment.image, attachment.memory, 0);
+
+            VkImageViewCreateInfo imageViewCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = attachment.image,
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = format,
+                .subresourceRange = {
+                    .aspectMask = aspectMask,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1
+                }
+            };
+            if (VkResult result = vkCreateImageView(device, &imageViewCreateInfo, nullptr, &attachment.imageView)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create G-buffer image view!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+        };
+
+        auto DestroyAttachment = [](attachmentResource& attachment) {
+            auto device = graphicsBase::Base().Device();
+            if (attachment.imageView)
+                vkDestroyImageView(device, attachment.imageView, nullptr);
+            if (attachment.image)
+                vkDestroyImage(device, attachment.image, nullptr);
+            if (attachment.memory)
+                vkFreeMemory(device, attachment.memory, nullptr);
+            attachment.imageView = VK_NULL_HANDLE;
+            attachment.image = VK_NULL_HANDLE;
+            attachment.memory = VK_NULL_HANDLE;
+        };
+
+        auto CreateGBufferResources = [&] {
+            rpwf.extent = windowSize;
+
+            CreateAttachment(
+                rpwf.albedo,
+                rpwf.albedoFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT);
+            CreateAttachment(
+                rpwf.normal,
+                rpwf.normalFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT);
+            CreateAttachment(
+                rpwf.depth,
+                rpwf.depthFormat,
+                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_DEPTH_BIT);
+
+            VkImageView attachments[] = {
+                rpwf.albedo.imageView,
+                rpwf.normal.imageView,
+                rpwf.depth.imageView
+            };
+            VkFramebufferCreateInfo framebufferCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                .renderPass = rpwf.renderPass,
+                .attachmentCount = 3,
+                .pAttachments = attachments,
+                .width = rpwf.extent.width,
+                .height = rpwf.extent.height,
+                .layers = 1
+            };
+            rpwf.framebuffer.Create(framebufferCreateInfo);
+        };
+
+        auto DestroyGBufferResources = [&] {
+            rpwf.framebuffer.~framebuffer();
+            DestroyAttachment(rpwf.albedo);
+            DestroyAttachment(rpwf.normal);
+            DestroyAttachment(rpwf.depth);
+        };
+
+        auto CreateSampler = [] {
+            auto device = graphicsBase::Base().Device();
+            VkSamplerCreateInfo samplerCreateInfo{};
+            samplerCreateInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerCreateInfo.magFilter = VK_FILTER_NEAREST;
+            samplerCreateInfo.minFilter = VK_FILTER_NEAREST;
+            samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+            samplerCreateInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerCreateInfo.mipLodBias = 0.0f;
+            samplerCreateInfo.anisotropyEnable = VK_FALSE;
+            samplerCreateInfo.compareEnable = VK_FALSE;
+            samplerCreateInfo.minLod = 0.0f;
+            samplerCreateInfo.maxLod = 0.0f;
+            samplerCreateInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+            samplerCreateInfo.unnormalizedCoordinates = VK_FALSE;
+            if (VkResult result = vkCreateSampler(device, &samplerCreateInfo, nullptr, &rpwf.sampler)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create G-buffer sampler!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+        };
+
+        auto DestroySamplerAndRenderPass = [] {
+            auto device = graphicsBase::Base().Device();
+            if (rpwf.sampler)
+                vkDestroySampler(device, rpwf.sampler, nullptr);
+            rpwf.sampler = VK_NULL_HANDLE;
+            rpwf.renderPass.~renderPass();
+        };
+
+        CreateSampler();
+        CreateGBufferResources();
+
+        ExecuteOnce(rpwf);
+        graphicsBase::Base().AddCallback_DestroySwapchain(DestroyGBufferResources);
+        graphicsBase::Base().AddCallback_CreateSwapchain(CreateGBufferResources);
+        graphicsBase::Base().AddCallback_DestroyDevice(DestroySamplerAndRenderPass);
 
         return rpwf;
     }

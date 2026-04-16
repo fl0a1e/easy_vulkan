@@ -158,6 +158,10 @@
     <ClInclude Include="vkStart.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="shaders\gbuffer.ps.hlsl" />
+    <None Include="shaders\gbuffer.vs.hlsl" />
+    <None Include="shaders\lighting.ps.hlsl" />
+    <None Include="shaders\lighting.vs.hlsl" />
     <None Include="shaders\shadow.vs.hlsl" />
     <None Include="shaders\triangle.ps.hlsl" />
     <None Include="shaders\triangle.vs.hlsl" />
