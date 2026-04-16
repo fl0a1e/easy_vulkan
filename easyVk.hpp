@@ -66,6 +66,18 @@ namespace easyVulkan {
             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
     }
 
+    inline VkFormat FindSceneColorFormat() {
+        static constexpr VkFormat candidates[] = {
+            VK_FORMAT_R16G16B16A16_SFLOAT,
+            VK_FORMAT_B10G11R11_UFLOAT_PACK32,
+            VK_FORMAT_R8G8B8A8_UNORM
+        };
+        return FindSupportedFormat(
+            candidates,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+    }
+
     struct renderPassWithFramebuffers {
         renderPass renderPass;
         std::vector<framebuffer> framebuffers;
@@ -102,6 +114,15 @@ namespace easyVulkan {
         attachmentResource albedo;
         attachmentResource normal;
         attachmentResource depth;
+        VkSampler sampler = VK_NULL_HANDLE;
+    };
+
+    struct sceneColorPassResources {
+        renderPass renderPass;
+        framebuffer framebuffer;
+        VkExtent2D extent = {};
+        VkFormat colorFormat = VK_FORMAT_UNDEFINED;
+        attachmentResource sceneColor;
         VkSampler sampler = VK_NULL_HANDLE;
     };
 
@@ -653,6 +674,179 @@ namespace easyVulkan {
         ExecuteOnce(rpwf);
         graphicsBase::Base().AddCallback_DestroySwapchain(DestroyGBufferResources);
         graphicsBase::Base().AddCallback_CreateSwapchain(CreateGBufferResources);
+        graphicsBase::Base().AddCallback_DestroyDevice(DestroySamplerAndRenderPass);
+
+        return rpwf;
+    }
+
+    const auto& CreateRpwf_SceneColor() {
+        static sceneColorPassResources rpwf;
+
+        rpwf.colorFormat = FindSceneColorFormat();
+        rpwf.extent = windowSize;
+
+        VkAttachmentDescription colorAttachmentDescription = {
+            .format = rpwf.colorFormat,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        };
+
+        VkAttachmentReference colorAttachmentReference = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+        VkSubpassDescription subpassDescription = {
+            .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &colorAttachmentReference
+        };
+
+        VkSubpassDependency subpassDependency = {
+            .srcSubpass = VK_SUBPASS_EXTERNAL,
+            .dstSubpass = 0,
+            .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT
+        };
+
+        VkRenderPassCreateInfo renderPassCreateInfo = {
+            .attachmentCount = 1,
+            .pAttachments = &colorAttachmentDescription,
+            .subpassCount = 1,
+            .pSubpasses = &subpassDescription,
+            .dependencyCount = 1,
+            .pDependencies = &subpassDependency
+        };
+        rpwf.renderPass.Create(renderPassCreateInfo);
+
+        auto CreateSceneColorAttachment = [&](attachmentResource& attachment) {
+            auto device = graphicsBase::Base().Device();
+
+            VkImageCreateInfo imageCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = rpwf.colorFormat,
+                .extent = { rpwf.extent.width, rpwf.extent.height, 1 },
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+            };
+            if (VkResult result = vkCreateImage(device, &imageCreateInfo, nullptr, &attachment.image)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create scene color image!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+
+            VkMemoryRequirements requirements{};
+            vkGetImageMemoryRequirements(device, attachment.image, &requirements);
+            VkMemoryAllocateInfo allocateInfo = {
+                .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                .allocationSize = requirements.size,
+                .memoryTypeIndex = FindMemoryTypeIndex(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+            };
+            if (VkResult result = vkAllocateMemory(device, &allocateInfo, nullptr, &attachment.memory)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to allocate scene color memory!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+            vkBindImageMemory(device, attachment.image, attachment.memory, 0);
+
+            VkImageViewCreateInfo imageViewCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = attachment.image,
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = rpwf.colorFormat,
+                .subresourceRange = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1
+                }
+            };
+            if (VkResult result = vkCreateImageView(device, &imageViewCreateInfo, nullptr, &attachment.imageView)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create scene color image view!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+        };
+
+        auto DestroyAttachment = [&](attachmentResource& attachment) {
+            auto device = graphicsBase::Base().Device();
+            if (attachment.imageView)
+                vkDestroyImageView(device, attachment.imageView, nullptr);
+            if (attachment.image)
+                vkDestroyImage(device, attachment.image, nullptr);
+            if (attachment.memory)
+                vkFreeMemory(device, attachment.memory, nullptr);
+            attachment.imageView = VK_NULL_HANDLE;
+            attachment.image = VK_NULL_HANDLE;
+            attachment.memory = VK_NULL_HANDLE;
+        };
+
+        auto CreateSceneColorResources = [&] {
+            rpwf.extent = windowSize;
+            CreateSceneColorAttachment(rpwf.sceneColor);
+
+            VkFramebufferCreateInfo framebufferCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                .renderPass = rpwf.renderPass,
+                .attachmentCount = 1,
+                .pAttachments = &rpwf.sceneColor.imageView,
+                .width = rpwf.extent.width,
+                .height = rpwf.extent.height,
+                .layers = 1
+            };
+            rpwf.framebuffer.Create(framebufferCreateInfo);
+        };
+
+        auto DestroySceneColorResources = [&] {
+            rpwf.framebuffer.~framebuffer();
+            DestroyAttachment(rpwf.sceneColor);
+        };
+
+        auto CreateSampler = [] {
+            auto device = graphicsBase::Base().Device();
+            VkSamplerCreateInfo samplerCreateInfo{};
+            samplerCreateInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerCreateInfo.magFilter = VK_FILTER_LINEAR;
+            samplerCreateInfo.minFilter = VK_FILTER_LINEAR;
+            samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            samplerCreateInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerCreateInfo.mipLodBias = 0.0f;
+            samplerCreateInfo.anisotropyEnable = VK_FALSE;
+            samplerCreateInfo.compareEnable = VK_FALSE;
+            samplerCreateInfo.minLod = 0.0f;
+            samplerCreateInfo.maxLod = 0.0f;
+            samplerCreateInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+            samplerCreateInfo.unnormalizedCoordinates = VK_FALSE;
+            if (VkResult result = vkCreateSampler(device, &samplerCreateInfo, nullptr, &rpwf.sampler)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create scene color sampler!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+        };
+
+        auto DestroySamplerAndRenderPass = [] {
+            auto device = graphicsBase::Base().Device();
+            if (rpwf.sampler)
+                vkDestroySampler(device, rpwf.sampler, nullptr);
+            rpwf.sampler = VK_NULL_HANDLE;
+            rpwf.renderPass.~renderPass();
+        };
+
+        CreateSampler();
+        CreateSceneColorResources();
+
+        ExecuteOnce(rpwf);
+        graphicsBase::Base().AddCallback_DestroySwapchain(DestroySceneColorResources);
+        graphicsBase::Base().AddCallback_CreateSwapchain(CreateSceneColorResources);
         graphicsBase::Base().AddCallback_DestroyDevice(DestroySamplerAndRenderPass);
 
         return rpwf;

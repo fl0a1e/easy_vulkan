@@ -14,10 +14,11 @@
 - [x] 纹理、光照接入
 - [x] .obj 模型加载器
 - [x] 多物体渲染
-- [ ] shadow map
-- [ ] deferred / G-buffer
-- [ ] postprocess pass
+- [x] shadow map
+- [x] deferred / G-buffer
+- [x] postprocess pass
 - [ ] compute shader pass
+- [ ] debug 模块
 - [ ] 接入 compute-driven 小功能
 - [ ] 光追管线接入
 - [ ] RDG

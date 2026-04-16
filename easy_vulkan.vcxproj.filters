@@ -70,6 +70,12 @@
     <None Include="shaders\lighting.ps.hlsl">
       <Filter>资源文件</Filter>
     </None>
+    <None Include="shaders\postprocess.vs.hlsl">
+      <Filter>资源文件</Filter>
+    </None>
+    <None Include="shaders\postprocess.ps.hlsl">
+      <Filter>资源文件</Filter>
+    </None>
     <None Include="shaders\shadow.vs.hlsl">
       <Filter>资源文件</Filter>
     </None>

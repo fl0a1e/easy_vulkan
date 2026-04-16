@@ -78,9 +78,11 @@ struct RenderObject {
 pipelineLayout pipelineLayout_gbuffer;  // G-buffer pass 管线布局
 pipelineLayout pipelineLayout_shadow;   // shadow pass 管线布局
 pipelineLayout pipelineLayout_lighting; // lighting pass 管线布局
+pipelineLayout pipelineLayout_postprocess; // postprocess pass 管线布局
 pipeline pipeline_gbuffer;              // G-buffer 管线
 pipeline pipeline_shadow;               // shadow map 管线
-pipeline pipeline_lighting;             // fullscreen lighting 管线
+pipeline pipeline_lighting;             // fullscreen lighting 管线，输出到 scene color
+pipeline pipeline_postprocess;          // fullscreen postprocess 管线
 buffer uniformBuffer_camera;            // 相机 uniform 缓冲
 buffer lightBuffer;                     // 光照 uniform 缓冲
 buffer shadowUniformBuffer;             // 光源视角矩阵
@@ -92,11 +94,14 @@ deviceMemory shadowUniformMemory;       // shadow uniform 显存
 VkDescriptorSetLayout descriptorSetLayout_gbuffer = VK_NULL_HANDLE;
 VkDescriptorSetLayout descriptorSetLayout_shadow = VK_NULL_HANDLE;
 VkDescriptorSetLayout descriptorSetLayout_lighting = VK_NULL_HANDLE;
+VkDescriptorSetLayout descriptorSetLayout_postprocess = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_gbuffer = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_shadow = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_lighting = VK_NULL_HANDLE;
+VkDescriptorPool descriptorPool_postprocess = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_shadow = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_lighting = VK_NULL_HANDLE;
+VkDescriptorSet descriptorSet_postprocess = VK_NULL_HANDLE;
 
 camera camera_main; // 主相机，只负责生成 view/proj
 
@@ -167,6 +172,11 @@ const auto& ShadowRenderPassResources() {
 
 const auto& GBufferPassResources() {
     static const auto& rpwf = easyVulkan::CreateRpwf_GBuffer();
+    return rpwf;
+}
+
+const auto& SceneColorPassResources() {
+    static const auto& rpwf = easyVulkan::CreateRpwf_SceneColor();
     return rpwf;
 }
 
@@ -496,6 +506,32 @@ void CmdPrepareGBufferForSampling(VkCommandBuffer commandBuffer) {
         VK_ACCESS_SHADER_READ_BIT);
 }
 
+void CmdPrepareSceneColorForSampling(VkCommandBuffer commandBuffer, VkImage sceneColorImage) {
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = sceneColorImage;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier);
+}
+
 void CreateGBufferDescriptorSetLayout() {
     VkDescriptorSetLayoutBinding uboBinding{};
     uboBinding.binding = 0;
@@ -624,6 +660,32 @@ void CreateLightingDescriptorSetLayout() {
     }
 }
 
+void CreatePostprocessDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding sceneColorBinding{};
+    sceneColorBinding.binding = 0;
+    sceneColorBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    sceneColorBinding.descriptorCount = 1;
+    sceneColorBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding samplerBinding{};
+    samplerBinding.binding = 1;
+    samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    samplerBinding.descriptorCount = 1;
+    samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    const std::array bindings = { sceneColorBinding, samplerBinding };
+
+    VkDescriptorSetLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    createInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    createInfo.pBindings = bindings.data();
+
+    if (VkResult result = vkCreateDescriptorSetLayout(graphicsBase::Base().Device(), &createInfo, nullptr, &descriptorSetLayout_postprocess)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create postprocess descriptor set layout!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+}
+
 void CreateGBufferLayout() {
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -657,6 +719,13 @@ void CreateLightingLayout() {
     pipelineLayoutCreateInfo.setLayoutCount = 1;
     pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout_lighting;
     pipelineLayout_lighting.Create(pipelineLayoutCreateInfo);
+}
+
+void CreatePostprocessLayout() {
+    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{};
+    pipelineLayoutCreateInfo.setLayoutCount = 1;
+    pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout_postprocess;
+    pipelineLayout_postprocess.Create(pipelineLayoutCreateInfo);
 }
 
 // CreateGeometry()：把模型数据真正送进 GPU
@@ -1130,6 +1199,69 @@ void CreateLightingDescriptorSet() {
     graphicsBase::Base().AddCallback_CreateSwapchain(UpdateLightingDescriptorSet);
 }
 
+void UpdatePostprocessDescriptorSet() {
+    if (!descriptorSet_postprocess)
+        return;
+
+    const auto& sceneColor = SceneColorPassResources();
+
+    VkDescriptorImageInfo sceneColorInfo{};
+    sceneColorInfo.imageView = sceneColor.sceneColor.imageView;
+    sceneColorInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkDescriptorImageInfo samplerInfo{};
+    samplerInfo.sampler = sceneColor.sampler;
+
+    std::array<VkWriteDescriptorSet, 2> writes{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = descriptorSet_postprocess;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    writes[0].pImageInfo = &sceneColorInfo;
+
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = descriptorSet_postprocess;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+    writes[1].pImageInfo = &samplerInfo;
+
+    vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+}
+
+void CreatePostprocessDescriptorSet() {
+    const std::array poolSizes = {
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1 },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, 1 }
+    };
+
+    VkDescriptorPoolCreateInfo poolCreateInfo{};
+    poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCreateInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolCreateInfo.pPoolSizes = poolSizes.data();
+    poolCreateInfo.maxSets = 1;
+
+    if (VkResult result = vkCreateDescriptorPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &descriptorPool_postprocess)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create postprocess descriptor pool!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = descriptorPool_postprocess;
+    allocateInfo.descriptorSetCount = 1;
+    allocateInfo.pSetLayouts = &descriptorSetLayout_postprocess;
+
+    if (VkResult result = vkAllocateDescriptorSets(graphicsBase::Base().Device(), &allocateInfo, &descriptorSet_postprocess)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to allocate postprocess descriptor set!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    UpdatePostprocessDescriptorSet();
+    graphicsBase::Base().AddCallback_CreateSwapchain(UpdatePostprocessDescriptorSet);
+}
+
 glm::mat4 BuildModelMatrix(const RenderObject& object, float time) {
     glm::mat4 translation = glm::translate(glm::mat4(1.0f), object.position);
     glm::mat4 rotation = glm::rotate(
@@ -1304,14 +1436,15 @@ void CreateLightingPipeline() {
     auto Create = [] {
         graphicsPipelineCreateInfoPack pipelineCiPack;
         pipelineCiPack.createInfo.layout = pipelineLayout_lighting;
-        pipelineCiPack.createInfo.renderPass = RenderPassAndFramebuffers().renderPass;
+        pipelineCiPack.createInfo.renderPass = SceneColorPassResources().renderPass;
         pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_FILL;
         pipelineCiPack.rasterizationStateCi.cullMode = VK_CULL_MODE_NONE;
         pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         pipelineCiPack.rasterizationStateCi.lineWidth = 1.0f;
-        pipelineCiPack.viewports.emplace_back(0.f, 0.f, float(windowSize.width), float(windowSize.height), 0.f, 1.f);
-        pipelineCiPack.scissors.emplace_back(VkOffset2D{}, windowSize);
+        const auto& sceneColor = SceneColorPassResources();
+        pipelineCiPack.viewports.emplace_back(0.f, 0.f, float(sceneColor.extent.width), float(sceneColor.extent.height), 0.f, 1.f);
+        pipelineCiPack.scissors.emplace_back(VkOffset2D{}, sceneColor.extent);
         pipelineCiPack.multisampleStateCi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
         pipelineCiPack.depthStencilStateCi.depthTestEnable = VK_FALSE;
         pipelineCiPack.depthStencilStateCi.depthWriteEnable = VK_FALSE;
@@ -1331,6 +1464,44 @@ void CreateLightingPipeline() {
     Create();
 }
 
+void CreatePostprocessPipeline() {
+    static shaderModule vs("shaders/postprocess.vs.spv");
+    static shaderModule ps("shaders/postprocess.ps.spv");
+    static VkPipelineShaderStageCreateInfo shaderStageCreateInfos_postprocess[2] = {
+        vs.StageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT),
+        ps.StageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT)
+    };
+
+    auto Create = [] {
+        graphicsPipelineCreateInfoPack pipelineCiPack;
+        pipelineCiPack.createInfo.layout = pipelineLayout_postprocess;
+        pipelineCiPack.createInfo.renderPass = RenderPassAndFramebuffers().renderPass;
+        pipelineCiPack.inputAssemblyStateCi.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        pipelineCiPack.rasterizationStateCi.polygonMode = VK_POLYGON_MODE_FILL;
+        pipelineCiPack.rasterizationStateCi.cullMode = VK_CULL_MODE_NONE;
+        pipelineCiPack.rasterizationStateCi.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        pipelineCiPack.rasterizationStateCi.lineWidth = 1.0f;
+        pipelineCiPack.viewports.emplace_back(0.f, 0.f, float(windowSize.width), float(windowSize.height), 0.f, 1.f);
+        pipelineCiPack.scissors.emplace_back(VkOffset2D{}, windowSize);
+        pipelineCiPack.multisampleStateCi.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        pipelineCiPack.depthStencilStateCi.depthTestEnable = VK_FALSE;
+        pipelineCiPack.depthStencilStateCi.depthWriteEnable = VK_FALSE;
+        pipelineCiPack.colorBlendAttachmentStates.push_back({ .colorWriteMask = 0b1111 });
+        pipelineCiPack.UpdateAllArrays();
+        pipelineCiPack.createInfo.stageCount = 2;
+        pipelineCiPack.createInfo.pStages = shaderStageCreateInfos_postprocess;
+        pipeline_postprocess.Create(pipelineCiPack);
+    };
+
+    auto Destroy = [] {
+        pipeline_postprocess.~pipeline();
+    };
+
+    graphicsBase::Base().AddCallback_CreateSwapchain(Create);
+    graphicsBase::Base().AddCallback_DestroySwapchain(Destroy);
+    Create();
+}
+
 void DestroyDescriptors() {
     auto device = graphicsBase::Base().Device();
     if (descriptorPool_gbuffer)
@@ -1339,20 +1510,27 @@ void DestroyDescriptors() {
         vkDestroyDescriptorPool(device, descriptorPool_shadow, nullptr);
     if (descriptorPool_lighting)
         vkDestroyDescriptorPool(device, descriptorPool_lighting, nullptr);
+    if (descriptorPool_postprocess)
+        vkDestroyDescriptorPool(device, descriptorPool_postprocess, nullptr);
     if (descriptorSetLayout_gbuffer)
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout_gbuffer, nullptr);
     if (descriptorSetLayout_shadow)
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout_shadow, nullptr);
     if (descriptorSetLayout_lighting)
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout_lighting, nullptr);
+    if (descriptorSetLayout_postprocess)
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout_postprocess, nullptr);
     descriptorPool_gbuffer = VK_NULL_HANDLE;
     descriptorPool_shadow = VK_NULL_HANDLE;
     descriptorPool_lighting = VK_NULL_HANDLE;
+    descriptorPool_postprocess = VK_NULL_HANDLE;
     descriptorSetLayout_gbuffer = VK_NULL_HANDLE;
     descriptorSetLayout_shadow = VK_NULL_HANDLE;
     descriptorSetLayout_lighting = VK_NULL_HANDLE;
+    descriptorSetLayout_postprocess = VK_NULL_HANDLE;
     descriptorSet_shadow = VK_NULL_HANDLE;
     descriptorSet_lighting = VK_NULL_HANDLE;
+    descriptorSet_postprocess = VK_NULL_HANDLE;
 }
 
 int main() {
@@ -1362,16 +1540,20 @@ int main() {
     const auto& rpwf = RenderPassAndFramebuffers();
     const auto& shadowRpwf = ShadowRenderPassResources();
     const auto& gbufferRpwf = GBufferPassResources();
+    const auto& sceneColorRpwf = SceneColorPassResources();
     const auto& renderPass = rpwf.renderPass;
     const auto& framebuffers = rpwf.framebuffers;
     const auto& shadowRenderPass = shadowRpwf.shadowPass;
     const auto& gbufferRenderPass = gbufferRpwf.renderPass;
+    const auto& sceneColorRenderPass = sceneColorRpwf.renderPass;
     CreateGBufferDescriptorSetLayout();
     CreateShadowDescriptorSetLayout();
     CreateLightingDescriptorSetLayout();
+    CreatePostprocessDescriptorSetLayout();
     CreateGBufferLayout();
     CreateShadowLayout();
     CreateLightingLayout();
+    CreatePostprocessLayout();
     const auto meshPaths = DiscoverMeshPaths();
     meshResources.clear();
     meshResources.reserve(meshPaths.size() + 1);
@@ -1396,9 +1578,11 @@ int main() {
     CreateGBufferDescriptorSet();
     CreateShadowDescriptorSet();
     CreateLightingDescriptorSet();
+    CreatePostprocessDescriptorSet();
     CreateGBufferPipeline();
     CreateShadowPipeline();
     CreateLightingPipeline();
+    CreatePostprocessPipeline();
     camera_main.AttachToWindow(pWindow);
 
     // 先创建成 signaled，这样第一帧开头的 WaitAndReset 不会阻塞。
@@ -1419,6 +1603,7 @@ int main() {
         { .color = { 0.f, 0.f, 0.f, 1.f } },
         { .depthStencil = { 1.0f, 0 } }
     };
+    VkClearValue sceneColorClearValue = { .color = { 0.f, 0.f, 0.f, 1.f } };
     VkClearValue shadowClearValue = { .depthStencil = { 1.0f, 0 } };
 
     static const auto sceneStartTime = std::chrono::high_resolution_clock::now();
@@ -1532,7 +1717,7 @@ int main() {
         gbufferRenderPass.CmdEnd(commandBuffer);
         CmdPrepareGBufferForSampling(commandBuffer);
 
-        renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, screenClearValues);
+        sceneColorRenderPass.CmdBegin(commandBuffer, sceneColorRpwf.framebuffer, { {}, sceneColorRpwf.extent }, sceneColorClearValue);
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lighting);
         vkCmdBindDescriptorSets(
             commandBuffer,
@@ -1541,6 +1726,21 @@ int main() {
             0,
             1,
             &descriptorSet_lighting,
+            0,
+            nullptr);
+        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+        sceneColorRenderPass.CmdEnd(commandBuffer);
+        CmdPrepareSceneColorForSampling(commandBuffer, sceneColorRpwf.sceneColor.image);
+
+        renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, screenClearValues);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_postprocess);
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            pipelineLayout_postprocess,
+            0,
+            1,
+            &descriptorSet_postprocess,
             0,
             nullptr);
         vkCmdDraw(commandBuffer, 3, 1, 0, 0);
@@ -1557,6 +1757,7 @@ int main() {
     pipeline_shadow.~pipeline();
     pipeline_gbuffer.~pipeline();
     pipeline_lighting.~pipeline();
+    pipeline_postprocess.~pipeline();
     DestroyDescriptors();
     DestroyMaterialResources();
     DestroyMeshResources();
