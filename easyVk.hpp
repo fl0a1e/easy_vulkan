@@ -78,6 +78,16 @@ namespace easyVulkan {
             VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
     }
 
+    inline VkFormat FindBlurStorageFormat() {
+        static constexpr VkFormat candidates[] = {
+            VK_FORMAT_R16G16B16A16_SFLOAT
+        };
+        return FindSupportedFormat(
+            candidates,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+    }
+
     struct renderPassWithFramebuffers {
         renderPass renderPass;
         std::vector<framebuffer> framebuffers;
@@ -123,6 +133,14 @@ namespace easyVulkan {
         VkExtent2D extent = {};
         VkFormat colorFormat = VK_FORMAT_UNDEFINED;
         attachmentResource sceneColor;
+        VkSampler sampler = VK_NULL_HANDLE;
+    };
+
+    struct computeBlurResources {
+        VkExtent2D extent = {};
+        VkFormat colorFormat = VK_FORMAT_UNDEFINED;
+        attachmentResource tempBlur;
+        attachmentResource blurOutput;
         VkSampler sampler = VK_NULL_HANDLE;
     };
 
@@ -725,6 +743,11 @@ namespace easyVulkan {
 
         auto CreateSceneColorAttachment = [&](attachmentResource& attachment) {
             auto device = graphicsBase::Base().Device();
+            const uint32_t queueFamilyIndices[] = {
+                graphicsBase::Base().QueueFamilyIndex_Graphics(),
+                graphicsBase::Base().QueueFamilyIndex_Compute()
+            };
+            const bool useConcurrentSharing = queueFamilyIndices[0] != queueFamilyIndices[1];
 
             VkImageCreateInfo imageCreateInfo = {
                 .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -736,7 +759,9 @@ namespace easyVulkan {
                 .samples = VK_SAMPLE_COUNT_1_BIT,
                 .tiling = VK_IMAGE_TILING_OPTIMAL,
                 .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .sharingMode = useConcurrentSharing ? VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE,
+                .queueFamilyIndexCount = useConcurrentSharing ? 2u : 0u,
+                .pQueueFamilyIndices = useConcurrentSharing ? queueFamilyIndices : nullptr,
                 .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
             };
             if (VkResult result = vkCreateImage(device, &imageCreateInfo, nullptr, &attachment.image)) {
@@ -848,6 +873,137 @@ namespace easyVulkan {
         graphicsBase::Base().AddCallback_DestroySwapchain(DestroySceneColorResources);
         graphicsBase::Base().AddCallback_CreateSwapchain(CreateSceneColorResources);
         graphicsBase::Base().AddCallback_DestroyDevice(DestroySamplerAndRenderPass);
+
+        return rpwf;
+    }
+
+    const auto& CreateComputeBlurResources() {
+        static computeBlurResources rpwf;
+
+        rpwf.colorFormat = FindBlurStorageFormat();
+        rpwf.extent = windowSize;
+
+        auto CreateAttachment = [&](attachmentResource& attachment) {
+            auto device = graphicsBase::Base().Device();
+            const uint32_t queueFamilyIndices[] = {
+                graphicsBase::Base().QueueFamilyIndex_Graphics(),
+                graphicsBase::Base().QueueFamilyIndex_Compute()
+            };
+            const bool useConcurrentSharing = queueFamilyIndices[0] != queueFamilyIndices[1];
+
+            VkImageCreateInfo imageCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = rpwf.colorFormat,
+                .extent = { rpwf.extent.width, rpwf.extent.height, 1 },
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                .sharingMode = useConcurrentSharing ? VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE,
+                .queueFamilyIndexCount = useConcurrentSharing ? 2u : 0u,
+                .pQueueFamilyIndices = useConcurrentSharing ? queueFamilyIndices : nullptr,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+            };
+            if (VkResult result = vkCreateImage(device, &imageCreateInfo, nullptr, &attachment.image)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create blur image!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+
+            VkMemoryRequirements requirements{};
+            vkGetImageMemoryRequirements(device, attachment.image, &requirements);
+            VkMemoryAllocateInfo allocateInfo = {
+                .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                .allocationSize = requirements.size,
+                .memoryTypeIndex = FindMemoryTypeIndex(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+            };
+            if (VkResult result = vkAllocateMemory(device, &allocateInfo, nullptr, &attachment.memory)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to allocate blur image memory!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+            vkBindImageMemory(device, attachment.image, attachment.memory, 0);
+
+            VkImageViewCreateInfo imageViewCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = attachment.image,
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = rpwf.colorFormat,
+                .subresourceRange = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1
+                }
+            };
+            if (VkResult result = vkCreateImageView(device, &imageViewCreateInfo, nullptr, &attachment.imageView)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create blur image view!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+        };
+
+        auto DestroyAttachment = [&](attachmentResource& attachment) {
+            auto device = graphicsBase::Base().Device();
+            if (attachment.imageView)
+                vkDestroyImageView(device, attachment.imageView, nullptr);
+            if (attachment.image)
+                vkDestroyImage(device, attachment.image, nullptr);
+            if (attachment.memory)
+                vkFreeMemory(device, attachment.memory, nullptr);
+            attachment.imageView = VK_NULL_HANDLE;
+            attachment.image = VK_NULL_HANDLE;
+            attachment.memory = VK_NULL_HANDLE;
+        };
+
+        auto CreateBlurResources = [&] {
+            rpwf.extent = windowSize;
+            CreateAttachment(rpwf.tempBlur);
+            CreateAttachment(rpwf.blurOutput);
+        };
+
+        auto DestroyBlurResources = [&] {
+            DestroyAttachment(rpwf.tempBlur);
+            DestroyAttachment(rpwf.blurOutput);
+        };
+
+        auto CreateSampler = [] {
+            auto device = graphicsBase::Base().Device();
+            VkSamplerCreateInfo samplerCreateInfo{};
+            samplerCreateInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+            samplerCreateInfo.magFilter = VK_FILTER_LINEAR;
+            samplerCreateInfo.minFilter = VK_FILTER_LINEAR;
+            samplerCreateInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            samplerCreateInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerCreateInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerCreateInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerCreateInfo.mipLodBias = 0.0f;
+            samplerCreateInfo.anisotropyEnable = VK_FALSE;
+            samplerCreateInfo.compareEnable = VK_FALSE;
+            samplerCreateInfo.minLod = 0.0f;
+            samplerCreateInfo.maxLod = 0.0f;
+            samplerCreateInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+            samplerCreateInfo.unnormalizedCoordinates = VK_FALSE;
+            if (VkResult result = vkCreateSampler(device, &samplerCreateInfo, nullptr, &rpwf.sampler)) {
+                outStream << std::format("[ easyVulkan ] ERROR\nFailed to create blur sampler!\nError code: {}\n", int32_t(result));
+                abort();
+            }
+        };
+
+        auto DestroySampler = [] {
+            auto device = graphicsBase::Base().Device();
+            if (rpwf.sampler)
+                vkDestroySampler(device, rpwf.sampler, nullptr);
+            rpwf.sampler = VK_NULL_HANDLE;
+        };
+
+        CreateSampler();
+        CreateBlurResources();
+
+        ExecuteOnce(rpwf);
+        graphicsBase::Base().AddCallback_DestroySwapchain(DestroyBlurResources);
+        graphicsBase::Base().AddCallback_CreateSwapchain(CreateBlurResources);
+        graphicsBase::Base().AddCallback_DestroyDevice(DestroySampler);
 
         return rpwf;
     }

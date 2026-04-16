@@ -17,7 +17,7 @@
 - [x] shadow map
 - [x] deferred / G-buffer
 - [x] postprocess pass
-- [ ] compute shader pass
+- [x] compute shader pass
 - [ ] debug 模块
 - [ ] 接入 compute-driven 小功能
 - [ ] 光追管线接入

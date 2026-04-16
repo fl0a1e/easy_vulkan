@@ -1,20 +1,20 @@
-#include "vkBase.h"
+Ôªø#include "vkBase.h"
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-#pragma comment(lib, "glfw3.lib") //¡¥Ω”±‡“ÎÀ˘–Ëµƒæ≤Ã¨ø‚
+#pragma comment(lib, "glfw3.lib") //ÈìæÊé•ÁºñËØëÊâÄÈúÄÁöÑÈùôÊÄÅÂ∫ì
 
 
-GLFWwindow* pWindow; //¥∞ø⁄÷∏’Î
-GLFWmonitor* pMonitor; //œ‘ æ∆˜–≈œ¢÷∏’Î
-const char* windowTitle = "EasyVK"; //¥∞ø⁄±ÍÃ‚
+GLFWwindow* pWindow; //Á™óÂè£ÊåáÈíà
+GLFWmonitor* pMonitor; //ÊòæÁ§∫Âô®‰ø°ÊÅØÊåáÈíà
+const char* windowTitle = "EasyVK"; //Á™óÂè£Ê†áÈ¢ò
 
 using namespace vulkan;
 
-// ≥ı ºªØ≥…π¶ ±∑µªÿtrue£¨∑Ò‘Ú∑µªÿfalse
-// size: ¥∞ø⁄¥Û–°
-// fullScreen: ÷∏∂® «∑Ò“‘»´∆¡≥ı ºªØ¥∞ø⁄
-// isResizable: ÷∏∂®¥∞ø⁄ «∑Òø…¿≠…Ï£¨”Œœ∑¥∞ø⁄Õ®≥£ «≤ªø…»Œ“‚¿≠…Ïµƒ
-// limitFrameRate: ÷∏∂® «∑ÒΩ´÷° ˝œﬁ÷∆µΩ≤ª≥¨π˝∆¡ƒªÀ¢–¬¬ £¨‘⁄±æΩ⁄œ»≤ª µœ÷’‚∏ˆ≤Œ ˝µƒ◊˜”√
+// ÂàùÂßãÂåñÊàêÂäüÊó∂ËøîÂõûtrueÔºåÂê¶ÂàôËøîÂõûfalse
+// size: Á™óÂè£Â§ßÂ∞è
+// fullScreen: ÊåáÂÆöÊòØÂê¶‰ª•ÂÖ®Â±èÂàùÂßãÂåñÁ™óÂè£
+// isResizable: ÊåáÂÆöÁ™óÂè£ÊòØÂê¶ÂèØÊãâ‰º∏ÔºåÊ∏∏ÊàèÁ™óÂè£ÈÄöÂ∏∏ÊòØ‰∏çÂèØ‰ªªÊÑèÊãâ‰º∏ÁöÑ
+// limitFrameRate: ÊåáÂÆöÊòØÂê¶Â∞ÜÂ∏ßÊï∞ÈôêÂà∂Âà∞‰∏çË∂ÖËøáÂ±èÂπïÂà∑Êñ∞ÁéáÔºåÂú®Êú¨ËäÇÂÖà‰∏çÂÆûÁé∞Ëøô‰∏™ÂèÇÊï∞ÁöÑ‰ΩúÁî®
 bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable = true, bool limitFrameRate = false) {
 
 	if(!glfwInit()) {
@@ -24,8 +24,8 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	glfwWindowHint(GLFW_RESIZABLE, isResizable);
-	pMonitor = glfwGetPrimaryMonitor(); // ªÒ»°µ±«∞œ‘ æ∆˜–≈œ¢
-	const GLFWvidmode* pMode = glfwGetVideoMode(pMonitor); // ªÒ»°µ±«∞œ‘ æ∆˜ ”∆µƒ£ Ω
+	pMonitor = glfwGetPrimaryMonitor(); // Ëé∑ÂèñÂΩìÂâçÊòæÁ§∫Âô®‰ø°ÊÅØ
+	const GLFWvidmode* pMode = glfwGetVideoMode(pMonitor); // Ëé∑ÂèñÂΩìÂâçÊòæÁ§∫Âô®ËßÜÈ¢ëÊ®°Âºè
 	pWindow = fullScreen ?
 		glfwCreateWindow(pMode->width, pMode->height, windowTitle, pMonitor, nullptr) :
 		glfwCreateWindow(size.width, size.height, windowTitle, nullptr, nullptr);
@@ -36,8 +36,8 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 	}
 
 	{
-		// ªÒ»°vulkan µ¿˝œ‡πÿ–≈œ¢
-		// ¿©’π
+		// Ëé∑ÂèñvulkanÂÆû‰æãÁõ∏ÂÖ≥‰ø°ÊÅØ
+		// Êâ©Â±ï
 		uint32_t extensionCount = 0;
 		const char** extensionNames;
 		extensionNames = glfwGetRequiredInstanceExtensions(&extensionCount);
@@ -49,14 +49,14 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 		for (size_t i = 0; i < extensionCount; i++) {
 			graphicsBase::Base().AddInstanceExtension(extensionNames[i]);
 		}
-		// ◊ˆ¥∞ø⁄œ‘ æ±ÿ–Î∆Ù”√ swapchain ¿©’π°£
+		// ÂÅöÁ™óÂè£ÊòæÁ§∫ÂøÖÈ°ªÂêØÁî® swapchain Êâ©Â±ï„ÄÇ
 		graphicsBase::Base().AddDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-		// surface “¿¿µ instance£¨“Ú¥Àœ»¥¥Ω® Vulkan instance
+		// surface ‰æùËµñ instanceÔºåÂõ†Ê≠§ÂÖàÂàõÂª∫ Vulkan instance
 		graphicsBase::Base().UseLatestApiVersion();
 		if (graphicsBase::Base().CreateInstance())
 			return false;
 
-		// »√ GLFW Œ™µ±«∞¥∞ø⁄¥¥Ω® VkSurfaceKHR£¨π©…Ë±∏—°‘Ò∫ÕΩªªª¡¥¥¥Ω® π”√
+		// ËÆ© GLFW ‰∏∫ÂΩìÂâçÁ™óÂè£ÂàõÂª∫ VkSurfaceKHRÔºå‰æõËÆæÂ§áÈÄâÊã©Âíå‰∫§Êç¢ÈìæÂàõÂª∫‰ΩøÁî®
 		VkSurfaceKHR surface = VK_NULL_HANDLE;
 		if (VkResult result = glfwCreateWindowSurface(graphicsBase::Base().Instance(), pWindow, nullptr, &surface)) {
 			std::cout << std::format("[ InitializeWindow ] ERROR\nFailed to create a window surface!\nError code: {}\n", int32_t(result));
@@ -65,17 +65,17 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 		}
 		graphicsBase::Base().Surface(surface);
 
-		// ≥ı ºªØ÷˜¡¥¬∑£∫√∂æŸŒÔ¿Ì…Ë±∏ -> —°‘Ò÷ß≥÷ graphics/present µƒ…Ë±∏ -> ¥¥Ω®¬ﬂº≠…Ë±∏
-		if (//ªÒ»°ŒÔ¿Ì…Ë±∏£¨≤¢ π”√¡–±Ì÷–µƒµ⁄“ª∏ˆŒÔ¿Ì…Ë±∏£¨’‚¿Ô≤ªøº¬«“‘œ¬»Œ“‚∫Ø ˝ ß∞‹∫Û∏¸ªªŒÔ¿Ì…Ë±∏µƒ«Èøˆ
+		// ÂàùÂßãÂåñ‰∏ªÈìæË∑ØÔºöÊûö‰∏æÁâ©ÁêÜËÆæÂ§á -> ÈÄâÊã©ÊîØÊåÅ graphics/present ÁöÑËÆæÂ§á -> ÂàõÂª∫ÈÄªËæëËÆæÂ§á
+		if (//Ëé∑ÂèñÁâ©ÁêÜËÆæÂ§áÔºåÂπ∂‰ΩøÁî®ÂàóË°®‰∏≠ÁöÑÁ¨¨‰∏Ä‰∏™Áâ©ÁêÜËÆæÂ§áÔºåËøôÈáå‰∏çËÄÉËôë‰ª•‰∏ã‰ªªÊÑèÂáΩÊï∞Â§±Ë¥•ÂêéÊõ¥Êç¢Áâ©ÁêÜËÆæÂ§áÁöÑÊÉÖÂÜµ
 			graphicsBase::Base().GetPhysicalDevices() ||
-			//“ª∏ˆtrue“ª∏ˆfalse£¨‘› ±≤ª–Ë“™º∆À„”√µƒ∂”¡–
-			graphicsBase::Base().DeterminePhysicalDevice(0, true, false) ||
-			//¥¥Ω®¬ﬂº≠…Ë±∏
+			//‰∏Ä‰∏™true‰∏Ä‰∏™falseÔºåÊöÇÊó∂‰∏çÈúÄË¶ÅËÆ°ÁÆóÁî®ÁöÑÈòüÂàó,Áé∞Âú®Ë¶Å‰∫ÜÂèòtrue‰∫Ü
+			graphicsBase::Base().DeterminePhysicalDevice(0, true, true) ||
+			//ÂàõÂª∫ÈÄªËæëËÆæÂ§á
 			graphicsBase::Base().CreateDevice())
 			return false;
 		//----------------------------------------
 
-		// Ωªªª¡¥∏∫‘∞—‰÷»æΩ·π˚ÀÕµΩ¥∞ø⁄°£
+		// ‰∫§Êç¢ÈìæË¥üË¥£ÊääÊ∏≤ÊüìÁªìÊûúÈÄÅÂà∞Á™óÂè£„ÄÇ
 		if (graphicsBase::Base().CreateSwapchain(limitFrameRate))
 			return false;
 	}
@@ -83,9 +83,9 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 	return true;
 }
 
-// ÷’÷π¥∞ø⁄ ±£¨«Â¿ÌGLFW
+// ÁªàÊ≠¢Á™óÂè£Êó∂ÔºåÊ∏ÖÁêÜGLFW
 void TerminateWindow() {
-	// ÕÀ≥ˆ«∞œ»µ»¥˝ GPU ø’œ–£¨±‹√‚◊ ‘¥»‘‘⁄ π”√ ±æÕ±ªœ˙ªŸ°£
+	// ÈÄÄÂá∫ÂâçÂÖàÁ≠âÂæÖ GPU Á©∫Èó≤ÔºåÈÅøÂÖçËµÑÊ∫ê‰ªçÂú®‰ΩøÁî®Êó∂Â∞±Ë¢´ÈîÄÊØÅ„ÄÇ
 	graphicsBase::Base().WaitIdle();
 	glfwTerminate();
 }
@@ -101,12 +101,12 @@ void TitleFps() {
 	// every frame
 	time1 = glfwGetTime();
 	++dframe;
-	// √ø√Î∏¸–¬“ª¥Œ±ÍÃ‚£¨±‹√‚√ø÷°∂º∏ƒ¥∞ø⁄±ÍÃ‚
+	// ÊØèÁßíÊõ¥Êñ∞‰∏ÄÊ¨°Ê†áÈ¢òÔºåÈÅøÂÖçÊØèÂ∏ßÈÉΩÊîπÁ™óÂè£Ê†áÈ¢ò
 	if ((dt = time1 - time0) >= 0.05) {
 		info.precision(0);
 		info << windowTitle << "    " << std::fixed << dframe / dt << " FPS";
 		glfwSetWindowTitle(pWindow, info.str().c_str());
-		info.str(""); //±Õ¸¡À‘⁄…Ë÷√ÕÍ¥∞ø⁄±ÍÃ‚∫Û«Âø’À˘”√µƒstringstream
+		info.str(""); //Âà´Âøò‰∫ÜÂú®ËÆæÁΩÆÂÆåÁ™óÂè£Ê†áÈ¢òÂêéÊ∏ÖÁ©∫ÊâÄÁî®ÁöÑstringstream
 		time0 = time1;
 		dframe = 0;
 	}

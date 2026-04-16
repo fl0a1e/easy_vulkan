@@ -58,6 +58,9 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <None Include="shaders\blur.cs.hlsl">
+      <Filter>资源文件</Filter>
+    </None>
     <None Include="shaders\gbuffer.vs.hlsl">
       <Filter>资源文件</Filter>
     </None>

@@ -32,6 +32,10 @@ struct ShadowPushConstantObject {
     glm::mat4 model;
 };
 
+struct ComputeBlurPushConstantObject {
+    glm::ivec4 direction;
+};
+
 // 光照信息
 // 平行光
 struct Light {
@@ -79,10 +83,12 @@ pipelineLayout pipelineLayout_gbuffer;  // G-buffer pass 管线布局
 pipelineLayout pipelineLayout_shadow;   // shadow pass 管线布局
 pipelineLayout pipelineLayout_lighting; // lighting pass 管线布局
 pipelineLayout pipelineLayout_postprocess; // postprocess pass 管线布局
+pipelineLayout pipelineLayout_computeBlur; // compute blur 管线布局
 pipeline pipeline_gbuffer;              // G-buffer 管线
 pipeline pipeline_shadow;               // shadow map 管线
 pipeline pipeline_lighting;             // fullscreen lighting 管线，输出到 scene color
 pipeline pipeline_postprocess;          // fullscreen postprocess 管线
+pipeline pipeline_computeBlur;          // separable blur compute 管线
 buffer uniformBuffer_camera;            // 相机 uniform 缓冲
 buffer lightBuffer;                     // 光照 uniform 缓冲
 buffer shadowUniformBuffer;             // 光源视角矩阵
@@ -95,13 +101,19 @@ VkDescriptorSetLayout descriptorSetLayout_gbuffer = VK_NULL_HANDLE;
 VkDescriptorSetLayout descriptorSetLayout_shadow = VK_NULL_HANDLE;
 VkDescriptorSetLayout descriptorSetLayout_lighting = VK_NULL_HANDLE;
 VkDescriptorSetLayout descriptorSetLayout_postprocess = VK_NULL_HANDLE;
+VkDescriptorSetLayout descriptorSetLayout_computeBlur = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_gbuffer = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_shadow = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_lighting = VK_NULL_HANDLE;
 VkDescriptorPool descriptorPool_postprocess = VK_NULL_HANDLE;
+VkDescriptorPool descriptorPool_computeBlur = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_shadow = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_lighting = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_postprocess = VK_NULL_HANDLE;
+VkDescriptorSet descriptorSet_computeBlurHorizontal = VK_NULL_HANDLE;
+VkDescriptorSet descriptorSet_computeBlurVertical = VK_NULL_HANDLE;
+
+bool blurImagesNeedInitialization = true;
 
 camera camera_main; // 主相机，只负责生成 view/proj
 
@@ -177,6 +189,11 @@ const auto& GBufferPassResources() {
 
 const auto& SceneColorPassResources() {
     static const auto& rpwf = easyVulkan::CreateRpwf_SceneColor();
+    return rpwf;
+}
+
+const auto& ComputeBlurResources() {
+    static const auto& rpwf = easyVulkan::CreateComputeBlurResources();
     return rpwf;
 }
 
@@ -506,11 +523,11 @@ void CmdPrepareGBufferForSampling(VkCommandBuffer commandBuffer) {
         VK_ACCESS_SHADER_READ_BIT);
 }
 
-void CmdPrepareSceneColorForSampling(VkCommandBuffer commandBuffer, VkImage sceneColorImage) {
+void CmdPrepareSceneColorForComputeRead(VkCommandBuffer commandBuffer, VkImage sceneColorImage) {
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = sceneColorImage;
@@ -525,6 +542,84 @@ void CmdPrepareSceneColorForSampling(VkCommandBuffer commandBuffer, VkImage scen
     vkCmdPipelineBarrier(
         commandBuffer,
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier);
+}
+
+void CmdInitializeComputeImage(VkCommandBuffer commandBuffer, VkImage image) {
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier);
+}
+
+void CmdPrepareComputeImageForRead(VkCommandBuffer commandBuffer, VkImage image) {
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier);
+}
+
+void CmdPrepareComputeImageForFragmentRead(VkCommandBuffer commandBuffer, VkImage image) {
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0,
         0, nullptr,
@@ -686,6 +781,32 @@ void CreatePostprocessDescriptorSetLayout() {
     }
 }
 
+void CreateComputeBlurDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding inputBinding{};
+    inputBinding.binding = 0;
+    inputBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    inputBinding.descriptorCount = 1;
+    inputBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutBinding outputBinding{};
+    outputBinding.binding = 1;
+    outputBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    outputBinding.descriptorCount = 1;
+    outputBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    const std::array bindings = { inputBinding, outputBinding };
+
+    VkDescriptorSetLayoutCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    createInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    createInfo.pBindings = bindings.data();
+
+    if (VkResult result = vkCreateDescriptorSetLayout(graphicsBase::Base().Device(), &createInfo, nullptr, &descriptorSetLayout_computeBlur)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create compute blur descriptor set layout!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+}
+
 void CreateGBufferLayout() {
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
@@ -726,6 +847,20 @@ void CreatePostprocessLayout() {
     pipelineLayoutCreateInfo.setLayoutCount = 1;
     pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout_postprocess;
     pipelineLayout_postprocess.Create(pipelineLayoutCreateInfo);
+}
+
+void CreateComputeBlurLayout() {
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(ComputeBlurPushConstantObject);
+
+    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{};
+    pipelineLayoutCreateInfo.setLayoutCount = 1;
+    pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout_computeBlur;
+    pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
+    pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
+    pipelineLayout_computeBlur.Create(pipelineLayoutCreateInfo);
 }
 
 // CreateGeometry()：把模型数据真正送进 GPU
@@ -1203,14 +1338,14 @@ void UpdatePostprocessDescriptorSet() {
     if (!descriptorSet_postprocess)
         return;
 
-    const auto& sceneColor = SceneColorPassResources();
+    const auto& blur = ComputeBlurResources();
 
-    VkDescriptorImageInfo sceneColorInfo{};
-    sceneColorInfo.imageView = sceneColor.sceneColor.imageView;
-    sceneColorInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorImageInfo blurInfo{};
+    blurInfo.imageView = blur.blurOutput.imageView;
+    blurInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkDescriptorImageInfo samplerInfo{};
-    samplerInfo.sampler = sceneColor.sampler;
+    samplerInfo.sampler = blur.sampler;
 
     std::array<VkWriteDescriptorSet, 2> writes{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1218,7 +1353,7 @@ void UpdatePostprocessDescriptorSet() {
     writes[0].dstBinding = 0;
     writes[0].descriptorCount = 1;
     writes[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    writes[0].pImageInfo = &sceneColorInfo;
+    writes[0].pImageInfo = &blurInfo;
 
     writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[1].dstSet = descriptorSet_postprocess;
@@ -1260,6 +1395,100 @@ void CreatePostprocessDescriptorSet() {
 
     UpdatePostprocessDescriptorSet();
     graphicsBase::Base().AddCallback_CreateSwapchain(UpdatePostprocessDescriptorSet);
+}
+
+void UpdateComputeBlurDescriptorSets() {
+    if (!descriptorSet_computeBlurHorizontal || !descriptorSet_computeBlurVertical)
+        return;
+
+    const auto& sceneColor = SceneColorPassResources();
+    const auto& blur = ComputeBlurResources();
+
+    VkDescriptorImageInfo sceneColorInfo{};
+    sceneColorInfo.imageView = sceneColor.sceneColor.imageView;
+    sceneColorInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkDescriptorImageInfo tempReadInfo{};
+    tempReadInfo.imageView = blur.tempBlur.imageView;
+    tempReadInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkDescriptorImageInfo tempWriteInfo{};
+    tempWriteInfo.imageView = blur.tempBlur.imageView;
+    tempWriteInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkDescriptorImageInfo outputWriteInfo{};
+    outputWriteInfo.imageView = blur.blurOutput.imageView;
+    outputWriteInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    std::array<VkWriteDescriptorSet, 4> writes{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = descriptorSet_computeBlurHorizontal;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    writes[0].pImageInfo = &sceneColorInfo;
+
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = descriptorSet_computeBlurHorizontal;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[1].pImageInfo = &tempWriteInfo;
+
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = descriptorSet_computeBlurVertical;
+    writes[2].dstBinding = 0;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    writes[2].pImageInfo = &tempReadInfo;
+
+    writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[3].dstSet = descriptorSet_computeBlurVertical;
+    writes[3].dstBinding = 1;
+    writes[3].descriptorCount = 1;
+    writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[3].pImageInfo = &outputWriteInfo;
+
+    vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+}
+
+void CreateComputeBlurDescriptorSet() {
+    const std::array poolSizes = {
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 2 },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 }
+    };
+
+    VkDescriptorPoolCreateInfo poolCreateInfo{};
+    poolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCreateInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolCreateInfo.pPoolSizes = poolSizes.data();
+    poolCreateInfo.maxSets = 2;
+
+    if (VkResult result = vkCreateDescriptorPool(graphicsBase::Base().Device(), &poolCreateInfo, nullptr, &descriptorPool_computeBlur)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to create compute blur descriptor pool!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    const std::array setLayouts = { descriptorSetLayout_computeBlur, descriptorSetLayout_computeBlur };
+
+    VkDescriptorSetAllocateInfo allocateInfo{};
+    allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocateInfo.descriptorPool = descriptorPool_computeBlur;
+    allocateInfo.descriptorSetCount = static_cast<uint32_t>(setLayouts.size());
+    allocateInfo.pSetLayouts = setLayouts.data();
+
+    VkDescriptorSet descriptorSets[2] = {};
+    if (VkResult result = vkAllocateDescriptorSets(graphicsBase::Base().Device(), &allocateInfo, descriptorSets)) {
+        std::cout << std::format("[ main ] ERROR\nFailed to allocate compute blur descriptor sets!\nError code: {}\n", int32_t(result));
+        abort();
+    }
+
+    descriptorSet_computeBlurHorizontal = descriptorSets[0];
+    descriptorSet_computeBlurVertical = descriptorSets[1];
+
+    UpdateComputeBlurDescriptorSets();
+    graphicsBase::Base().AddCallback_CreateSwapchain(UpdateComputeBlurDescriptorSets);
+    graphicsBase::Base().AddCallback_CreateSwapchain([] { blurImagesNeedInitialization = true; });
 }
 
 glm::mat4 BuildModelMatrix(const RenderObject& object, float time) {
@@ -1502,6 +1731,16 @@ void CreatePostprocessPipeline() {
     Create();
 }
 
+void CreateComputeBlurPipeline() {
+    static shaderModule cs("shaders/blur.cs.spv");
+    static VkPipelineShaderStageCreateInfo shaderStageCreateInfo = cs.StageCreateInfo(VK_SHADER_STAGE_COMPUTE_BIT);
+
+    VkComputePipelineCreateInfo createInfo{};
+    createInfo.layout = pipelineLayout_computeBlur;
+    createInfo.stage = shaderStageCreateInfo;
+    pipeline_computeBlur.Create(createInfo);
+}
+
 void DestroyDescriptors() {
     auto device = graphicsBase::Base().Device();
     if (descriptorPool_gbuffer)
@@ -1512,6 +1751,8 @@ void DestroyDescriptors() {
         vkDestroyDescriptorPool(device, descriptorPool_lighting, nullptr);
     if (descriptorPool_postprocess)
         vkDestroyDescriptorPool(device, descriptorPool_postprocess, nullptr);
+    if (descriptorPool_computeBlur)
+        vkDestroyDescriptorPool(device, descriptorPool_computeBlur, nullptr);
     if (descriptorSetLayout_gbuffer)
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout_gbuffer, nullptr);
     if (descriptorSetLayout_shadow)
@@ -1520,17 +1761,23 @@ void DestroyDescriptors() {
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout_lighting, nullptr);
     if (descriptorSetLayout_postprocess)
         vkDestroyDescriptorSetLayout(device, descriptorSetLayout_postprocess, nullptr);
+    if (descriptorSetLayout_computeBlur)
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout_computeBlur, nullptr);
     descriptorPool_gbuffer = VK_NULL_HANDLE;
     descriptorPool_shadow = VK_NULL_HANDLE;
     descriptorPool_lighting = VK_NULL_HANDLE;
     descriptorPool_postprocess = VK_NULL_HANDLE;
+    descriptorPool_computeBlur = VK_NULL_HANDLE;
     descriptorSetLayout_gbuffer = VK_NULL_HANDLE;
     descriptorSetLayout_shadow = VK_NULL_HANDLE;
     descriptorSetLayout_lighting = VK_NULL_HANDLE;
     descriptorSetLayout_postprocess = VK_NULL_HANDLE;
+    descriptorSetLayout_computeBlur = VK_NULL_HANDLE;
     descriptorSet_shadow = VK_NULL_HANDLE;
     descriptorSet_lighting = VK_NULL_HANDLE;
     descriptorSet_postprocess = VK_NULL_HANDLE;
+    descriptorSet_computeBlurHorizontal = VK_NULL_HANDLE;
+    descriptorSet_computeBlurVertical = VK_NULL_HANDLE;
 }
 
 int main() {
@@ -1541,19 +1788,28 @@ int main() {
     const auto& shadowRpwf = ShadowRenderPassResources();
     const auto& gbufferRpwf = GBufferPassResources();
     const auto& sceneColorRpwf = SceneColorPassResources();
+    const auto& blurRpwf = ComputeBlurResources();
     const auto& renderPass = rpwf.renderPass;
     const auto& framebuffers = rpwf.framebuffers;
     const auto& shadowRenderPass = shadowRpwf.shadowPass;
     const auto& gbufferRenderPass = gbufferRpwf.renderPass;
     const auto& sceneColorRenderPass = sceneColorRpwf.renderPass;
+
+    if (graphicsBase::Base().QueueFamilyIndex_Compute() == VK_QUEUE_FAMILY_IGNORED) {
+        std::cout << "[ main ] ERROR\nCompute queue was not initialized.\n";
+        return -1;
+    }
+
     CreateGBufferDescriptorSetLayout();
     CreateShadowDescriptorSetLayout();
     CreateLightingDescriptorSetLayout();
     CreatePostprocessDescriptorSetLayout();
+    CreateComputeBlurDescriptorSetLayout();
     CreateGBufferLayout();
     CreateShadowLayout();
     CreateLightingLayout();
     CreatePostprocessLayout();
+    CreateComputeBlurLayout();
     const auto meshPaths = DiscoverMeshPaths();
     meshResources.clear();
     meshResources.reserve(meshPaths.size() + 1);
@@ -1579,20 +1835,26 @@ int main() {
     CreateShadowDescriptorSet();
     CreateLightingDescriptorSet();
     CreatePostprocessDescriptorSet();
+    CreateComputeBlurDescriptorSet();
     CreateGBufferPipeline();
     CreateShadowPipeline();
     CreateLightingPipeline();
     CreatePostprocessPipeline();
+    CreateComputeBlurPipeline();
     camera_main.AttachToWindow(pWindow);
 
     // 先创建成 signaled，这样第一帧开头的 WaitAndReset 不会阻塞。
     fence fence(VK_FENCE_CREATE_SIGNALED_BIT);
     semaphore semaphore_imageIsAvailable;
+    semaphore semaphore_sceneColorIsReady;
+    semaphore semaphore_blurIsReady;
     semaphore semaphore_renderingIsOver;
-
-    commandBuffer commandBuffer;
-    commandPool commandPool(graphicsBase::Base().QueueFamilyIndex_Graphics(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-    commandPool.AllocateBuffers(commandBuffer);
+    commandBuffer commandBuffers_graphics[2];
+    commandBuffer commandBuffer_compute;
+    commandPool commandPool_graphics(graphicsBase::Base().QueueFamilyIndex_Graphics(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+    commandPool commandPool_compute(graphicsBase::Base().QueueFamilyIndex_Compute(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+    commandPool_graphics.AllocateBuffers(commandBuffers_graphics);
+    commandPool_compute.AllocateBuffers(commandBuffer_compute);
 
     VkClearValue screenClearValues[] = {
         { .color = { 0.f, 0.f, 0.f, 1.f } },
@@ -1630,11 +1892,11 @@ int main() {
         graphicsBase::Base().SwapImage(semaphore_imageIsAvailable);
         auto i = graphicsBase::Base().CurrentImageIndex();
 
-        commandBuffer.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-        shadowRenderPass.CmdBegin(commandBuffer, shadowRpwf.shadowFramebuffer, { {}, shadowRpwf.extent }, shadowClearValue);
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_shadow);
+        commandBuffers_graphics[0].Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+        shadowRenderPass.CmdBegin(commandBuffers_graphics[0], shadowRpwf.shadowFramebuffer, { {}, shadowRpwf.extent }, shadowClearValue);
+        vkCmdBindPipeline(commandBuffers_graphics[0], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_shadow);
         vkCmdBindDescriptorSets(
-            commandBuffer,
+            commandBuffers_graphics[0],
             VK_PIPELINE_BIND_POINT_GRAPHICS,
             pipelineLayout_shadow,
             0,
@@ -1652,27 +1914,27 @@ int main() {
             const auto& mesh = meshResources[renderObject.meshIndex];
             VkBuffer vertexBuffers[] = { mesh.vertexBuffer };
             VkDeviceSize offsets[] = { 0 };
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-            vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindVertexBuffers(commandBuffers_graphics[0], 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(commandBuffers_graphics[0], mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
             ShadowPushConstantObject shadowPushConstant{
                 .model = BuildModelMatrix(renderObject, sceneTime)
             };
             vkCmdPushConstants(
-                commandBuffer,
+                commandBuffers_graphics[0],
                 pipelineLayout_shadow,
                 VK_SHADER_STAGE_VERTEX_BIT,
                 0,
                 sizeof(shadowPushConstant),
                 &shadowPushConstant);
-            vkCmdDrawIndexed(commandBuffer, mesh.indexCount, 1, 0, 0, 0);
+            vkCmdDrawIndexed(commandBuffers_graphics[0], mesh.indexCount, 1, 0, 0, 0);
         }
 
-        shadowRenderPass.CmdEnd(commandBuffer);
-        CmdPrepareShadowMapForSampling(commandBuffer, shadowRpwf.depthImage);
+        shadowRenderPass.CmdEnd(commandBuffers_graphics[0]);
+        CmdPrepareShadowMapForSampling(commandBuffers_graphics[0], shadowRpwf.depthImage);
 
-        gbufferRenderPass.CmdBegin(commandBuffer, gbufferRpwf.framebuffer, { {}, gbufferRpwf.extent }, gbufferClearValues);
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_gbuffer);
+        gbufferRenderPass.CmdBegin(commandBuffers_graphics[0], gbufferRpwf.framebuffer, { {}, gbufferRpwf.extent }, gbufferClearValues);
+        vkCmdBindPipeline(commandBuffers_graphics[0], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_gbuffer);
         for (const auto& renderObject : renderObjects) {
             if (renderObject.meshIndex >= meshResources.size()) {
                 std::cout << std::format("[ main ] ERROR\nInvalid mesh index: {}\n", renderObject.meshIndex);
@@ -1686,7 +1948,7 @@ int main() {
             const auto& mesh = meshResources[renderObject.meshIndex];
             const auto& material = materialResources[renderObject.materialIndex];
             vkCmdBindDescriptorSets(
-                commandBuffer,
+                commandBuffers_graphics[0],
                 VK_PIPELINE_BIND_POINT_GRAPHICS,
                 pipelineLayout_gbuffer,
                 0,
@@ -1697,30 +1959,30 @@ int main() {
 
             VkBuffer vertexBuffers[] = { mesh.vertexBuffer };
             VkDeviceSize offsets[] = { 0 };
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-            vkCmdBindIndexBuffer(commandBuffer, mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindVertexBuffers(commandBuffers_graphics[0], 0, 1, vertexBuffers, offsets);
+            vkCmdBindIndexBuffer(commandBuffers_graphics[0], mesh.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
             PushConstantObject pushConstant{
                 .model = BuildModelMatrix(renderObject, sceneTime),
                 .meshInfo = glm::vec4(mesh.hasTexcoord ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f)
             };
             vkCmdPushConstants(
-                commandBuffer,
+                commandBuffers_graphics[0],
                 pipelineLayout_gbuffer,
                 VK_SHADER_STAGE_VERTEX_BIT,
                 0,
                 sizeof(pushConstant),
                 &pushConstant);
-            vkCmdDrawIndexed(commandBuffer, mesh.indexCount, 1, 0, 0, 0);
+            vkCmdDrawIndexed(commandBuffers_graphics[0], mesh.indexCount, 1, 0, 0, 0);
         }
 
-        gbufferRenderPass.CmdEnd(commandBuffer);
-        CmdPrepareGBufferForSampling(commandBuffer);
+        gbufferRenderPass.CmdEnd(commandBuffers_graphics[0]);
+        CmdPrepareGBufferForSampling(commandBuffers_graphics[0]);
 
-        sceneColorRenderPass.CmdBegin(commandBuffer, sceneColorRpwf.framebuffer, { {}, sceneColorRpwf.extent }, sceneColorClearValue);
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lighting);
+        sceneColorRenderPass.CmdBegin(commandBuffers_graphics[0], sceneColorRpwf.framebuffer, { {}, sceneColorRpwf.extent }, sceneColorClearValue);
+        vkCmdBindPipeline(commandBuffers_graphics[0], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lighting);
         vkCmdBindDescriptorSets(
-            commandBuffer,
+            commandBuffers_graphics[0],
             VK_PIPELINE_BIND_POINT_GRAPHICS,
             pipelineLayout_lighting,
             0,
@@ -1728,14 +1990,73 @@ int main() {
             &descriptorSet_lighting,
             0,
             nullptr);
-        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
-        sceneColorRenderPass.CmdEnd(commandBuffer);
-        CmdPrepareSceneColorForSampling(commandBuffer, sceneColorRpwf.sceneColor.image);
+        vkCmdDraw(commandBuffers_graphics[0], 3, 1, 0, 0);
+        sceneColorRenderPass.CmdEnd(commandBuffers_graphics[0]);
+        CmdPrepareSceneColorForComputeRead(commandBuffers_graphics[0], sceneColorRpwf.sceneColor.image);
+        commandBuffers_graphics[0].End();
 
-        renderPass.CmdBegin(commandBuffer, framebuffers[i], { {}, windowSize }, screenClearValues);
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_postprocess);
+        commandBuffer_compute.Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+        if (blurImagesNeedInitialization) {
+            CmdInitializeComputeImage(commandBuffer_compute, blurRpwf.tempBlur.image);
+            CmdInitializeComputeImage(commandBuffer_compute, blurRpwf.blurOutput.image);
+            blurImagesNeedInitialization = false;
+        }
+
+        constexpr uint32_t blurGroupSize = 8;
+        const uint32_t dispatchX = (blurRpwf.extent.width + blurGroupSize - 1) / blurGroupSize;
+        const uint32_t dispatchY = (blurRpwf.extent.height + blurGroupSize - 1) / blurGroupSize;
+
+        vkCmdBindPipeline(commandBuffer_compute, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_computeBlur);
+
+        ComputeBlurPushConstantObject blurPushConstant{
+            .direction = glm::ivec4(1, 0, 0, 0)
+        };
         vkCmdBindDescriptorSets(
-            commandBuffer,
+            commandBuffer_compute,
+            VK_PIPELINE_BIND_POINT_COMPUTE,
+            pipelineLayout_computeBlur,
+            0,
+            1,
+            &descriptorSet_computeBlurHorizontal,
+            0,
+            nullptr);
+        vkCmdPushConstants(
+            commandBuffer_compute,
+            pipelineLayout_computeBlur,
+            VK_SHADER_STAGE_COMPUTE_BIT,
+            0,
+            sizeof(blurPushConstant),
+            &blurPushConstant);
+        vkCmdDispatch(commandBuffer_compute, dispatchX, dispatchY, 1);
+
+        CmdPrepareComputeImageForRead(commandBuffer_compute, blurRpwf.tempBlur.image);
+
+        blurPushConstant.direction = glm::ivec4(0, 1, 0, 0);
+        vkCmdBindDescriptorSets(
+            commandBuffer_compute,
+            VK_PIPELINE_BIND_POINT_COMPUTE,
+            pipelineLayout_computeBlur,
+            0,
+            1,
+            &descriptorSet_computeBlurVertical,
+            0,
+            nullptr);
+        vkCmdPushConstants(
+            commandBuffer_compute,
+            pipelineLayout_computeBlur,
+            VK_SHADER_STAGE_COMPUTE_BIT,
+            0,
+            sizeof(blurPushConstant),
+            &blurPushConstant);
+        vkCmdDispatch(commandBuffer_compute, dispatchX, dispatchY, 1);
+        commandBuffer_compute.End();
+
+        commandBuffers_graphics[1].Begin(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+        renderPass.CmdBegin(commandBuffers_graphics[1], framebuffers[i], { {}, windowSize }, screenClearValues);
+        vkCmdBindPipeline(commandBuffers_graphics[1], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_postprocess);
+        vkCmdBindDescriptorSets(
+            commandBuffers_graphics[1],
             VK_PIPELINE_BIND_POINT_GRAPHICS,
             pipelineLayout_postprocess,
             0,
@@ -1743,11 +2064,49 @@ int main() {
             &descriptorSet_postprocess,
             0,
             nullptr);
-        vkCmdDraw(commandBuffer, 3, 1, 0, 0);
-        renderPass.CmdEnd(commandBuffer);
-        commandBuffer.End();
+        vkCmdDraw(commandBuffers_graphics[1], 3, 1, 0, 0);
+        renderPass.CmdEnd(commandBuffers_graphics[1]);
+        commandBuffers_graphics[1].End();
 
-        graphicsBase::Base().SubmitCommandBuffer_Graphics(commandBuffer, semaphore_imageIsAvailable, semaphore_renderingIsOver, fence);
+        {
+            VkSubmitInfo submitInfo{};
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers = commandBuffers_graphics[0].Address();
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = semaphore_sceneColorIsReady.Address();
+            graphicsBase::Base().SubmitCommandBuffer_Graphics(submitInfo);
+        }
+
+        {
+            const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+            VkSubmitInfo submitInfo{};
+            submitInfo.waitSemaphoreCount = 1;
+            submitInfo.pWaitSemaphores = semaphore_sceneColorIsReady.Address();
+            submitInfo.pWaitDstStageMask = &waitStage;
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers = commandBuffer_compute.Address();
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = semaphore_blurIsReady.Address();
+            graphicsBase::Base().SubmitCommandBuffer_Compute(submitInfo);
+        }
+
+        {
+            const VkSemaphore waitSemaphores[] = { semaphore_imageIsAvailable, semaphore_blurIsReady };
+            const VkPipelineStageFlags waitStages[] = {
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+            };
+            VkSubmitInfo submitInfo{};
+            submitInfo.waitSemaphoreCount = 2;
+            submitInfo.pWaitSemaphores = waitSemaphores;
+            submitInfo.pWaitDstStageMask = waitStages;
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers = commandBuffers_graphics[1].Address();
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = semaphore_renderingIsOver.Address();
+            graphicsBase::Base().SubmitCommandBuffer_Graphics(submitInfo, fence);
+        }
+
         graphicsBase::Base().PresentImage(semaphore_renderingIsOver);
 
         TitleFps();
@@ -1758,6 +2117,7 @@ int main() {
     pipeline_gbuffer.~pipeline();
     pipeline_lighting.~pipeline();
     pipeline_postprocess.~pipeline();
+    pipeline_computeBlur.~pipeline();
     DestroyDescriptors();
     DestroyMaterialResources();
     DestroyMeshResources();
