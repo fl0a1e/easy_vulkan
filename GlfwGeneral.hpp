@@ -51,6 +51,10 @@ bool InitializeWindow(VkExtent2D size, bool fullScreen = false, bool isResizable
 		}
 		// 做窗口显示必须启用 swapchain 扩展。
 		graphicsBase::Base().AddDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+		graphicsBase::Base().AddDeviceExtension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+		graphicsBase::Base().AddDeviceExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+		graphicsBase::Base().AddDeviceExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+		graphicsBase::Base().AddDeviceExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
 		// surface 依赖 instance，因此先创建 Vulkan instance
 		graphicsBase::Base().UseLatestApiVersion();
 		if (graphicsBase::Base().CreateInstance())

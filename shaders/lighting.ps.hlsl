@@ -37,6 +37,11 @@ cbuffer ShadowData
 [[vk::binding(6, 0)]] Texture2D<float> gDepthTexture;
 [[vk::binding(7, 0)]] SamplerState depthSampler;
 [[vk::binding(8, 0)]] Texture2D<float> shadowMapTexture;
+[[vk::binding(9, 0)]] RaytracingAccelerationStructure sceneTLAS;
+
+#ifndef USE_RAYQUERY_SHADOW
+#define USE_RAYQUERY_SHADOW 1
+#endif
 
 float3 ReconstructWorldPosition(float2 uv, float depth)
 {
@@ -68,6 +73,23 @@ float ComputeShadowFactor(float3 worldPosition)
     return currentDepth - bias <= shadowDepth ? 1.0f : 0.28f;
 }
 
+float ComputeRayQueryShadowFactor(float3 worldPosition, float3 normal, float3 lightDirection)
+{
+    float normalBias = 0.02f;
+    float3 rayOrigin = worldPosition + normal * normalBias;
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> rayQuery;
+    rayQuery.TraceRayInline(
+        sceneTLAS,
+        RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+        0xFF,
+        rayOrigin,
+        0.001f,
+        lightDirection,
+        1000.0f);
+    rayQuery.Proceed();
+    return rayQuery.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0.0f : 1.0f;
+}
+
 float4 main(PSInput input) : SV_Target0
 {
     float2 uv = saturate(input.UV);
@@ -82,7 +104,12 @@ float4 main(PSInput input) : SV_Target0
     float3 lightDirection = normalize(-lightDir);
     float3 viewDirection = normalize(cameraPosition - worldPosition);
     float3 halfVector = normalize(lightDirection + viewDirection);
-    float shadowFactor = ComputeShadowFactor(worldPosition);
+    float shadowFactor = 1.0f;
+#if USE_RAYQUERY_SHADOW
+    shadowFactor = ComputeRayQueryShadowFactor(worldPosition, normal, lightDirection);
+#else
+    shadowFactor = ComputeShadowFactor(worldPosition);
+#endif
 
     float ambient = 0.12f;
     float diffuse = max(dot(normal, lightDirection), 0.0f);
