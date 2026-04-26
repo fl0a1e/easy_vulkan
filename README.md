@@ -29,7 +29,7 @@
 ## Requirements
 
 - Visual Studio 2022 / 2026（勾选 C++ 开发）
-- Vulkan SDK 1.4.341.1 —— https://vulkan.lunarg.com/sdk/home
+- Vulkan SDK 1.4.341.1 or 1.4.335 —— https://vulkan.lunarg.com/sdk/home
 
 ---
 
@@ -63,8 +63,7 @@ cd easy_vulkan
 
 本项目已在以下显卡环境测试通过：
 
-- NVIDIA GeForce GTX 1650
-- NVIDIA GeForce RTX 4070
+- NVIDIA GeForce GTX 1650 / 4070 / 4090
 
 ---
 
