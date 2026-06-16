@@ -6,6 +6,7 @@
 #include "Camera.hpp"
 #include "ImageLoader.hpp"
 #include "ModelLoader.hpp"
+#include "RayTracingAS.hpp"
 #include "Terrain.hpp"
 
 using namespace vulkan;
@@ -56,6 +57,7 @@ struct MeshResource {
     buffer indexBuffer;
     deviceMemory vertexMemory;
     deviceMemory indexMemory;
+    uint32_t vertexCount = 0;
     uint32_t indexCount = 0;
     bool hasTexcoord = true;
 };
@@ -112,6 +114,7 @@ VkDescriptorSet descriptorSet_lighting = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_postprocess = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_computeBlurHorizontal = VK_NULL_HANDLE;
 VkDescriptorSet descriptorSet_computeBlurVertical = VK_NULL_HANDLE;
+rayTracing::SceneAS sceneAS;
 
 bool blurImagesNeedInitialization = true;
 
@@ -732,6 +735,12 @@ void CreateLightingDescriptorSetLayout() {
     shadowImageBinding.descriptorCount = 1;
     shadowImageBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    VkDescriptorSetLayoutBinding tlasBinding{};
+    tlasBinding.binding = 9;
+    tlasBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    tlasBinding.descriptorCount = 1;
+    tlasBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     const std::array bindings = {
         cameraBinding,
         lightBinding,
@@ -741,7 +750,8 @@ void CreateLightingDescriptorSetLayout() {
         normalBinding,
         depthBinding,
         depthSamplerBinding,
-        shadowImageBinding
+        shadowImageBinding,
+        tlasBinding
     };
 
     VkDescriptorSetLayoutCreateInfo createInfo{};
@@ -868,15 +878,20 @@ MeshResource CreateMeshResource(const modelLoading::MeshData& meshData) {
     auto CreateUploadBuffer = [](buffer& gpuBuffer, deviceMemory& gpuMemory, VkBufferUsageFlags usage, const void* pData, size_t size) {
         // 几何缓冲这边先继续走最容易理解的路径：
         // 创建一个 HOST_VISIBLE | HOST_COHERENT 的缓冲，让 CPU 可以直接写入数据。
-        gpuBuffer.Create(size, usage);
+        gpuBuffer.Create(size, usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
         const auto requirements = gpuBuffer.MemoryRequirements();
         VkMemoryAllocateInfo allocateInfo = {
+            .pNext = nullptr,
             .allocationSize = requirements.size,
             .memoryTypeIndex = FindMemoryTypeIndex(
                 requirements.memoryTypeBits,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
         };
+        VkMemoryAllocateFlagsInfo flagsInfo{};
+        flagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+        flagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        allocateInfo.pNext = &flagsInfo;
         gpuMemory.Create(allocateInfo);
         gpuBuffer.BindMemory(gpuMemory); // 绑定 buffer 和 memory
         gpuMemory.Write(pData, size);    // map + memcpy + unmap
@@ -900,6 +915,7 @@ MeshResource CreateMeshResource(const modelLoading::MeshData& meshData) {
         sizeof(uint32_t) * meshData.indices.size());
 
     meshResource.indexCount = static_cast<uint32_t>(meshData.indices.size());
+    meshResource.vertexCount = static_cast<uint32_t>(meshData.vertices.size());
     meshResource.hasTexcoord = meshData.hasTexcoord;
     return meshResource;
 }
@@ -1234,7 +1250,13 @@ void UpdateLightingDescriptorSet() {
     shadowInfo.imageView = shadowResources.depthImageView;
     shadowInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
-    std::array<VkWriteDescriptorSet, 9> writes{};
+    VkWriteDescriptorSetAccelerationStructureKHR asWriteInfo{};
+    asWriteInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+    asWriteInfo.accelerationStructureCount = 1;
+    VkAccelerationStructureKHR tlas = sceneAS.Tlas();
+    asWriteInfo.pAccelerationStructures = &tlas;
+
+    std::array<VkWriteDescriptorSet, 10> writes{};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = descriptorSet_lighting;
     writes[0].dstBinding = 0;
@@ -1298,6 +1320,13 @@ void UpdateLightingDescriptorSet() {
     writes[8].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     writes[8].pImageInfo = &shadowInfo;
 
+    writes[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[9].pNext = &asWriteInfo;
+    writes[9].dstSet = descriptorSet_lighting;
+    writes[9].dstBinding = 9;
+    writes[9].descriptorCount = 1;
+    writes[9].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+
     vkUpdateDescriptorSets(graphicsBase::Base().Device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 }
 
@@ -1305,7 +1334,8 @@ void CreateLightingDescriptorSet() {
     const std::array poolSizes = {
         VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
         VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 4 },
-        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, 2 }
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_SAMPLER, 2 },
+        VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 }
     };
 
     VkDescriptorPoolCreateInfo poolCreateInfo{};
@@ -1499,6 +1529,33 @@ glm::mat4 BuildModelMatrix(const RenderObject& object, float time) {
         object.rotationAxis);
     glm::mat4 scale = glm::scale(glm::mat4(1.0f), object.scale);
     return translation * rotation * scale;
+}
+
+void CreateRayTracingAS() {
+    std::vector<rayTracing::BlasInput> blasInputs;
+    blasInputs.reserve(meshResources.size());
+    for (const auto& mesh : meshResources) {
+        rayTracing::BlasInput input{};
+        input.vertexBuffer = mesh.vertexBuffer;
+        input.vertexCount = mesh.vertexCount;
+        input.vertexStride = sizeof(modelLoading::Vertex);
+        input.indexBuffer = mesh.indexBuffer;
+        input.indexCount = mesh.indexCount;
+        blasInputs.push_back(input);
+    }
+
+    std::vector<rayTracing::TlasInstanceInput> tlasInstances;
+    tlasInstances.reserve(renderObjects.size());
+    for (uint32_t i = 0; i < renderObjects.size(); ++i) {
+        const auto& object = renderObjects[i];
+        rayTracing::TlasInstanceInput instance{};
+        instance.blasIndex = object.meshIndex;
+        instance.transform = BuildModelMatrix(object, 0.0f);
+        instance.customIndex = i;
+        tlasInstances.push_back(instance);
+    }
+
+    sceneAS.Create(blasInputs, tlasInstances);
 }
 
 glm::mat4 BuildLightViewProjection() {
@@ -1828,6 +1885,7 @@ int main() {
     for (const auto& materialPath : materialPaths)
         materialResources.push_back(CreateMaterialResource(materialPath));
     renderObjects = CreateDefaultRenderObjects(modelMeshCount, static_cast<uint32_t>(materialResources.size()), groundMeshIndex);
+    CreateRayTracingAS();
     CreateUniformResources();
     CreateLightResources();
     CreateShadowUniformResources();
@@ -2119,19 +2177,12 @@ int main() {
     pipeline_postprocess.~pipeline();
     pipeline_computeBlur.~pipeline();
     DestroyDescriptors();
+    sceneAS.Destroy();
     DestroyMaterialResources();
     DestroyMeshResources();
     TerminateWindow();
     return 0;
 }
-
-
-
-
-
-
-
-
 
 
 

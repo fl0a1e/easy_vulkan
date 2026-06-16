@@ -24,6 +24,9 @@
     <ClCompile Include="ModelLoader.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="RayTracingAS.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="Terrain.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -51,6 +54,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="ModelLoader.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="RayTracingAS.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Terrain.hpp">
@@ -90,5 +96,4 @@
     </None>
   </ItemGroup>
 </Project>
-
 

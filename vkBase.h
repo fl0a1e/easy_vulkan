@@ -925,8 +925,23 @@ namespace vulkan {
 				queueCreateInfos[queueCreateInfoCount++].queueFamilyIndex = queueFamilyIndex_compute;
 			VkPhysicalDeviceFeatures physicalDeviceFeatures;
 			vkGetPhysicalDeviceFeatures(physicalDevice, &physicalDeviceFeatures);
+			VkPhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures{
+				.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+				.bufferDeviceAddress = VK_TRUE
+			};
+			VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{
+				.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
+				.pNext = &bufferDeviceAddressFeatures,
+				.accelerationStructure = VK_TRUE
+			};
+			VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{
+				.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR,
+				.pNext = &accelerationStructureFeatures,
+				.rayQuery = VK_TRUE
+			};
 			VkDeviceCreateInfo deviceCreateInfo = {
 				.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+				.pNext = &rayQueryFeatures,
 				.flags = flags,
 				.queueCreateInfoCount = queueCreateInfoCount,
 				.pQueueCreateInfos = queueCreateInfos,
